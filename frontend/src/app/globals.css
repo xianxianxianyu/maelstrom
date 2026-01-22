@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply antialiased;
+  }
+}
+
+/* Academic prose styling */
+.prose {
+  --tw-prose-body: theme("colors.slate.700");
+  --tw-prose-headings: theme("colors.slate.900");
+  --tw-prose-links: theme("colors.blue.600");
+  --tw-prose-bold: theme("colors.slate.900");
+  --tw-prose-code: theme("colors.slate.900");
+}
+
+.prose img {
+  @apply rounded border border-slate-200 my-6;
+}
+
+.prose h2 {
+  @apply text-2xl font-normal tracking-tight mt-12 mb-4 pb-2 border-b border-slate-200;
+}
+
+.prose p {
+  @apply leading-relaxed mb-4;
+}
