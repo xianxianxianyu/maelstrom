@@ -28,6 +28,7 @@ def get_provider_for_model(model: str) -> type[BaseProvider]:
 class TranslationService:
     """Translation service with multi-provider support"""
 
+    # 默认翻译 prompt — 仅在 prompt_generator 未生成定制化 prompt 时使用
     SYSTEM_PROMPT = (
         "You are a professional English-to-Chinese translator for academic papers.\n"
         "RULES:\n"

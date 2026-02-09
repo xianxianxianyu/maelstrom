@@ -2,7 +2,6 @@
 import asyncio
 import json
 import logging
-import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -10,15 +9,15 @@ from typing import Any
 
 import aiofiles
 
+from app.services.image_utils import extract_base64_images
+
 logger = logging.getLogger(__name__)
 
 # 项目根目录 (core 同级)
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
+# translation_store.py 位于 test/backend/app/services/
+# parents: [0]=services [1]=app [2]=backend [3]=test
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TRANSLATION_DIR = PROJECT_ROOT / "Translation"
-
-_B64_PATTERN = re.compile(
-    r'!\[([^\]]*)\]\(data:image/(png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+/=\s]+)\)'
-)
 
 
 class TranslationStore:
@@ -164,28 +163,8 @@ class TranslationStore:
     # ── 内部方法 ──
 
     def _extract_base64_images(self, markdown: str) -> tuple[str, dict[str, bytes]]:
-        """从 markdown 中提取 base64 图片，替换为相对路径"""
-        import base64 as b64mod
-        images: dict[str, bytes] = {}
-        counter = [0]
-
-        def _replace(m):
-            counter[0] += 1
-            alt = m.group(1)
-            ext = m.group(2)
-            if ext == "jpeg":
-                ext = "jpg"
-            data_str = m.group(3).replace("\n", "").replace(" ", "")
-            try:
-                img_bytes = b64mod.b64decode(data_str)
-            except Exception:
-                return m.group(0)  # 解码失败，保留原样
-            name = f"fig_{counter[0]}.{ext}"
-            images[name] = img_bytes
-            return f"![{alt}](./images/{name})"
-
-        new_md = _B64_PATTERN.sub(_replace, markdown)
-        return new_md, images
+        """从 markdown 中提取 base64 图片，替换为相对路径（委托给 image_utils）"""
+        return extract_base64_images(markdown)
 
     @staticmethod
     def _generate_display_name(stem: str, existing: list[str]) -> str:

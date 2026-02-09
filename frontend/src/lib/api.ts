@@ -188,3 +188,32 @@ export async function deleteTranslation(id: string): Promise<void> {
 export function getTranslationImageUrl(tid: string, filename: string): string {
   return `${API_BASE}/api/translations/${tid}/images/${filename}`
 }
+
+
+// ── Agent QA API ──
+
+export interface QAResponse {
+  answer: string
+  profile_used: string
+}
+
+export async function askQuestion(
+  question: string,
+  profileName?: string,
+  context?: string,
+): Promise<QAResponse> {
+  const response = await fetch(`${API_BASE}/api/agent/qa`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question,
+      profile_name: profileName || undefined,
+      context: context || undefined,
+    }),
+  })
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`QA failed: ${error}`)
+  }
+  return response.json()
+}

@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* KaTeX 样式 */
+@import "katex/dist/katex.min.css";
+
 @layer base {
   body {
     @apply antialiased bg-gray-50 text-gray-900;
@@ -22,23 +25,165 @@
   }
 }
 
-/* Prose 样式 */
-.prose {
+/* ── Markdown Viewer 专用样式 ── */
+
+.markdown-viewer .prose {
   --tw-prose-body: theme("colors.gray.700");
   --tw-prose-headings: theme("colors.gray.900");
   --tw-prose-links: theme("colors.indigo.600");
   --tw-prose-bold: theme("colors.gray.900");
   --tw-prose-code: theme("colors.gray.800");
+  font-feature-settings: "kern" 1, "liga" 1;
+  -webkit-font-smoothing: antialiased;
 }
 
-.prose img {
-  @apply rounded-lg border border-gray-200 my-6;
+/* 段落行距 — 学术论文阅读体验 */
+.markdown-viewer .prose p {
+  line-height: 1.8;
+  margin-bottom: 1em;
+  text-align: justify;
+  word-break: break-word;
+  hyphens: auto;
 }
 
-.prose h2 {
-  @apply text-xl font-semibold tracking-tight mt-10 mb-3 pb-2 border-b border-gray-100;
+/* 图片 + 图注 */
+.markdown-viewer figure {
+  @apply my-8 text-center;
 }
 
-.prose p {
-  @apply leading-relaxed mb-4;
+.markdown-viewer figure img {
+  @apply rounded-lg border border-gray-100 mx-auto shadow-md;
+  margin-bottom: 0.75rem;
+}
+
+.markdown-viewer figcaption {
+  @apply text-xs text-gray-500 leading-relaxed mt-3 px-6 max-w-2xl mx-auto;
+  text-align: center;
+}
+
+/* 后端生成的 figcaption div */
+.markdown-viewer .figcaption {
+  @apply text-xs text-gray-500 leading-relaxed my-2 px-6 max-w-3xl mx-auto;
+  text-align: center;
+}
+
+.markdown-viewer .figcaption strong {
+  @apply text-gray-600 font-semibold;
+}
+
+/* 表格 */
+.markdown-viewer table {
+  @apply w-full text-xs border-collapse;
+  line-height: 1.6;
+}
+
+.markdown-viewer thead th {
+  @apply bg-gray-50 font-semibold text-gray-700 text-left;
+  @apply border border-gray-200 px-3 py-2;
+  white-space: nowrap;
+}
+
+.markdown-viewer tbody td {
+  @apply border border-gray-200 px-3 py-2 text-gray-600;
+}
+
+.markdown-viewer tbody tr:nth-child(even) {
+  @apply bg-gray-50/30;
+}
+
+.markdown-viewer tbody tr:hover {
+  @apply bg-indigo-50/30;
+}
+
+/* LaTeX 公式 */
+.markdown-viewer .katex-display {
+  @apply my-6 overflow-x-auto;
+  padding: 0.5rem 0;
+}
+
+.markdown-viewer .katex {
+  font-size: 1em;
+}
+
+/* 行内公式不要太大 */
+.markdown-viewer p .katex {
+  font-size: 0.95em;
+}
+
+/* 块级公式居中 + 适当间距 */
+.markdown-viewer .katex-display > .katex {
+  font-size: 1.1em;
+}
+
+/* 代码块 */
+.markdown-viewer pre {
+  @apply bg-gray-900 text-gray-100 rounded-lg p-4 my-4 overflow-x-auto text-sm;
+  @apply shadow-sm border border-gray-800;
+}
+
+.markdown-viewer pre code {
+  @apply bg-transparent p-0 text-inherit;
+  font-size: inherit;
+}
+
+/* 行内代码 */
+.markdown-viewer :not(pre) > code {
+  @apply bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded text-sm;
+  font-weight: normal;
+}
+
+/* blockquote 图注样式 */
+.markdown-viewer blockquote {
+  @apply border-l-4 border-indigo-300 bg-indigo-50/50 pl-4 pr-3 py-2 my-4 rounded-r-lg;
+  @apply text-sm text-gray-600 leading-relaxed;
+  font-style: normal;
+}
+
+.markdown-viewer blockquote p {
+  @apply mb-0;
+}
+
+/* 引用编号上标 */
+.markdown-viewer sup {
+  @apply text-indigo-600 font-normal;
+  font-size: 0.7em;
+  line-height: 0;
+  vertical-align: super;
+  cursor: default;
+  transition: color 0.15s;
+}
+
+.markdown-viewer sup:hover {
+  @apply text-indigo-800;
+}
+
+/* 列表样式 */
+.markdown-viewer ul {
+  @apply list-disc pl-5 my-3 space-y-1;
+}
+
+.markdown-viewer ol {
+  @apply list-decimal pl-5 my-3 space-y-1;
+}
+
+.markdown-viewer li {
+  line-height: 1.7;
+}
+
+/* 分隔线 */
+.markdown-viewer hr {
+  @apply my-8 border-gray-200;
+}
+
+/* 标题下方的段落首行不缩进（学术风格） */
+.markdown-viewer h1 + p,
+.markdown-viewer h2 + p,
+.markdown-viewer h3 + p,
+.markdown-viewer h4 + p {
+  margin-top: 0.5em;
+}
+
+/* 参考文献区域样式 */
+.markdown-viewer .prose p:has(sup) {
+  line-height: 1.8;
 }

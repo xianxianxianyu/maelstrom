@@ -18,9 +18,9 @@ DEFAULT_ASYNC_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
 DEFAULT_MODEL = "PaddleOCR-VL-1.5"
 
 # 超时设置
-SYNC_TIMEOUT = 120  # 同步模式 120 秒
+SYNC_TIMEOUT = 600  # 同步模式 10 分钟（大 PDF 可能非常慢）
 ASYNC_POLL_INTERVAL = 5  # 异步轮询间隔 5 秒
-ASYNC_MAX_WAIT = 300  # 异步最大等待 300 秒
+ASYNC_MAX_WAIT = 900  # 异步最大等待 900 秒（15 分钟，大 PDF 需要较长处理时间）
 
 
 class PaddleOCRProvider(BaseOCRProvider):
@@ -110,7 +110,10 @@ class PaddleOCRProvider(BaseOCRProvider):
                     error_msg = poll_resp.json()["data"].get("errorMsg", "未知错误")
                     raise RuntimeError(f"PaddleOCR 任务失败: {error_msg}")
                 else:
-                    logger.debug(f"PaddleOCR 任务状态: {state}, 已等待 {elapsed}s")
+                    if elapsed % 30 == 0:  # 每 30 秒打一次 INFO 日志
+                        logger.info(f"PaddleOCR 任务处理中: {job_id}, 已等待 {elapsed}s, 状态: {state}")
+                    else:
+                        logger.debug(f"PaddleOCR 任务状态: {state}, 已等待 {elapsed}s")
 
             raise TimeoutError(f"PaddleOCR 异步任务超时 ({ASYNC_MAX_WAIT}s)")
 

@@ -15,6 +15,7 @@ export interface LLMProfile {
   provider: string
   model: string
   api_key: string
+  has_key?: boolean
   base_url: string | null
   temperature: number
   max_tokens: number

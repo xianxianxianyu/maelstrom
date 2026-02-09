@@ -250,22 +250,15 @@ export function OCRConfigPanel() {
                   <input type="password" value={s.token}
                     onChange={(e) => updateProfile(name, "token", e.target.value)}
                     placeholder={s.provider === "mineru" ? "MineRU JWT Token（mineru.net 个人中心获取）" : "PaddleOCR API Token（可选）"}
+                    autoComplete="new-password"
+                    data-lpignore="true"
+                    data-1p-ignore
                     className="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 focus:ring-1 focus:ring-teal-300"
                   />
                   {s.provider === "mineru" && !s.token && (
                     <p className="text-[10px] text-amber-500 mt-0.5">⚠ MineRU 必须填写 Token 才能使用</p>
                   )}
                 </div>
-                {s.provider === "paddleocr" && s.mode === "async" && (
-                  <div>
-                    <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Model</label>
-                    <input type="text" value={s.model}
-                      onChange={(e) => updateProfile(name, "model", e.target.value)}
-                      placeholder="PaddleOCR-VL-1.5"
-                      className="w-full px-2 py-1 text-xs border border-gray-200 rounded bg-gray-50 focus:ring-1 focus:ring-teal-300"
-                    />
-                  </div>
-                )}
 
                 {/* PaddleOCR 高级选项 */}
                 {s.provider === "paddleocr" && (

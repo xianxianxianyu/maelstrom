@@ -1,41 +1,34 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { getLLMConfig } from "@/lib/api"
+import { askQuestion } from "@/lib/api"
+import { useLLMConfig } from "@/contexts/LLMConfigContext"
 
 interface Message {
   role: "user" | "assistant"
   content: string
 }
 
-interface Props {
-  profileNames: string[]
-}
-
-export function QAPanel({ profileNames }: Props) {
+export function QAPanel() {
+  const { profileNames, bindings } = useLLMConfig()
   const [selectedProfile, setSelectedProfile] = useState("")
   const [input, setInput] = useState("")
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  // 当 context 中的 profileNames/bindings 变化时，自动选中合适的档案
   useEffect(() => {
-    loadDefault()
-  }, [])
+    if (!selectedProfile || !profileNames.includes(selectedProfile)) {
+      const bound = bindings?.qa
+      if (bound && profileNames.includes(bound)) setSelectedProfile(bound)
+      else if (profileNames.length > 0) setSelectedProfile(profileNames[0])
+    }
+  }, [profileNames, bindings, selectedProfile])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
-
-  const loadDefault = async () => {
-    try {
-      const data = await getLLMConfig()
-      const names = Object.keys(data.profiles)
-      const bound = data.bindings?.qa
-      if (bound && names.includes(bound)) setSelectedProfile(bound)
-      else if (names.length > 0) setSelectedProfile(names[0])
-    } catch { /* 忽略 */ }
-  }
 
   const handleSend = async () => {
     const q = input.trim()
@@ -44,11 +37,15 @@ export function QAPanel({ profileNames }: Props) {
     setMessages((prev) => [...prev, { role: "user", content: q }])
     setLoading(true)
     try {
-      // QA 端点占位 — 后续接入实际 API
-      await new Promise((r) => setTimeout(r, 600))
+      const res = await askQuestion(q, selectedProfile)
       setMessages((prev) => [...prev, {
         role: "assistant",
-        content: `[QA 功能开发中]\n\n使用档案: ${selectedProfile}\n\n这里将显示基于文档内容的回答。`,
+        content: res.answer,
+      }])
+    } catch (err: any) {
+      setMessages((prev) => [...prev, {
+        role: "assistant",
+        content: `❌ 调用失败: ${err.message || "未知错误"}`,
       }])
     } finally { setLoading(false) }
   }

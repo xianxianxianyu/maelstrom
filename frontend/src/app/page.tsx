@@ -6,18 +6,16 @@ import { UploadButton } from "@/components/UploadButton"
 import { MarkdownViewer } from "@/components/MarkdownViewer"
 import { LoadingState } from "@/components/LoadingState"
 import { QAPanel } from "@/components/QAPanel"
-import { uploadPDF, getLLMConfig, cancelAllTasks, getTranslation } from "@/lib/api"
+import { uploadPDF, cancelAllTasks, getTranslation } from "@/lib/api"
 import { ModelConfig, TranslationEntry } from "@/types"
+import { useLLMConfig } from "@/contexts/LLMConfigContext"
 
 export default function Home() {
   const [markdown, setMarkdown] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
-  const [profileNames, setProfileNames] = useState<string[]>([])
+  const { profileNames, profileMap, bindings } = useLLMConfig()
   const [selectedProfile, setSelectedProfile] = useState("")
-  const [profileMap, setProfileMap] = useState<
-    Record<string, { provider: string; model: string; api_key: string }>
-  >({})
   const [systemPrompt, setSystemPrompt] = useState(
     "You are a professional English-to-Chinese translator for academic papers.\n" +
     "RULES:\n" +
@@ -45,7 +43,14 @@ export default function Home() {
   const containerRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  useEffect(() => { loadProfiles() }, [])
+  // 当 context 中的 profileNames/bindings 变化时，自动选中合适的档案
+  useEffect(() => {
+    if (!selectedProfile || !profileNames.includes(selectedProfile)) {
+      const bound = bindings?.translation
+      if (bound && profileNames.includes(bound)) setSelectedProfile(bound)
+      else if (profileNames.length > 0) setSelectedProfile(profileNames[0])
+    }
+  }, [profileNames, bindings, selectedProfile])
 
   // 拖拽事件
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -74,22 +79,6 @@ export default function Home() {
     }
   }, [isDragging])
 
-  const loadProfiles = async () => {
-    try {
-      const data = await getLLMConfig()
-      const names = Object.keys(data.profiles)
-      setProfileNames(names)
-      const map: Record<string, { provider: string; model: string; api_key: string }> = {}
-      for (const [name, cfg] of Object.entries(data.profiles)) {
-        map[name] = { provider: cfg.provider, model: cfg.model, api_key: cfg.api_key }
-      }
-      setProfileMap(map)
-      const bound = data.bindings?.translation
-      if (bound && names.includes(bound)) setSelectedProfile(bound)
-      else if (names.length > 0) setSelectedProfile(names[0])
-    } catch { /* ignore */ }
-  }
-
   const handleUpload = async (file: File) => {
     const prof = profileMap[selectedProfile]
     if (!prof) { setError("请先在侧边栏配置并选择 LLM 档案"); return }
@@ -102,7 +91,6 @@ export default function Home() {
       const config: ModelConfig = {
         provider: prof.provider as ModelConfig["provider"],
         model: prof.model,
-        apiKey: prof.api_key || undefined,
       }
       const result = await uploadPDF(file, config, systemPrompt, enableOcr, controller.signal)
       setMarkdown(result.markdown)
@@ -258,7 +246,7 @@ export default function Home() {
         style={{ width: qaWidth }}
         className="flex-shrink-0 flex flex-col bg-white"
       >
-        <QAPanel profileNames={profileNames} />
+        <QAPanel />
       </aside>
     </div>
   )

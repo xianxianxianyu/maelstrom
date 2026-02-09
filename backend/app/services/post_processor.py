@@ -9,6 +9,7 @@ class PostProcessor:
         text = self._convert_html_to_markdown(text)
         text = self._normalize_headings(text)
         text = self._clean_whitespace(text)
+        text = self._superscript_citations(text)
         return text
 
     def _strip_code_fences(self, text: str) -> str:
@@ -106,3 +107,21 @@ class PostProcessor:
         # 连续 3 个以上空行合并为 2 个
         text = re.sub(r'\n{3,}', '\n\n', text)
         return text.strip()
+
+    def _superscript_citations(self, text: str) -> str:
+        """将学术引用编号 [1], [60] 等转为 <sup> 上标"""
+        # 不处理表格行和代码块
+        lines = text.split('\n')
+        result = []
+        in_code = False
+        for line in lines:
+            if line.strip().startswith('```'):
+                in_code = not in_code
+            if not in_code and not line.strip().startswith('|'):
+                line = re.sub(
+                    r'(?<!\!)\[(\d+(?:\s*,\s*\d+)*)\](?!\()',
+                    lambda m: '<sup>[' + m.group(1) + ']</sup>',
+                    line,
+                )
+            result.append(line)
+        return '\n'.join(result)

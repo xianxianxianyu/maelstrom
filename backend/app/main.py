@@ -45,6 +45,7 @@ from app.api.routes import pdf, models, keys
 from app.api.routes import llm_config as llm_config_route
 from app.api.routes import ocr_config as ocr_config_route
 from app.api.routes import translations as translations_route
+from app.api.routes import agent as agent_route
 from core.llm import get_llm_manager, load_config_data
 from core.ocr import get_ocr_manager, load_ocr_config_data
 from app.core.key_store import key_store
@@ -73,6 +74,7 @@ app.include_router(keys.router)
 app.include_router(llm_config_route.router)
 app.include_router(ocr_config_route.router)
 app.include_router(translations_route.router)
+app.include_router(agent_route.router)
 
 
 @app.get("/")
@@ -106,6 +108,9 @@ async def startup_load_llm_configs():
         profiles, bindings = load_config_data()
         for name, config in profiles.items():
             manager.register_profile(name, config)
+            # 将 YAML 中的 api_key 注入 KeyStore
+            if config.api_key:
+                key_store.set_key(config.provider, config.api_key)
         manager.set_bindings(bindings)
         logger.info(f"已从 YAML 加载 {len(profiles)} 个 LLM 档案")
     except Exception as e:
