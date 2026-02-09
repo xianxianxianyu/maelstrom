@@ -19,6 +19,7 @@ class TranslationResponse(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
     markdown: str
+    ocr_markdown: Optional[str] = None
     provider_used: str
     model_used: str
 
