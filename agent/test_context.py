@@ -36,6 +36,8 @@ class TestAgentContextFields:
             "file_content",
             "event_bus",
             "enable_ocr",
+            "pipeline_type",
+            "parsed_pdf",
             "glossary",
             "prompt_profile",
             "translated_md",
@@ -48,8 +50,8 @@ class TestAgentContextFields:
         assert field_names == expected
 
     def test_required_fields_count(self):
-        """AgentContext should have 13 fields total."""
-        assert len(fields(AgentContext)) == 13
+        """AgentContext should have 15 fields total."""
+        assert len(fields(AgentContext)) == 15
 
 
 # ---------------------------------------------------------------------------

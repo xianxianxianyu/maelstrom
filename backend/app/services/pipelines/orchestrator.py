@@ -11,10 +11,10 @@ import logging
 import time
 from typing import Optional
 
-from app.services.task_manager import get_task_manager, TaskInfo
-from app.services.translation_store import get_translation_store
-from app.services.translator import TranslationService
-from app.services.llm_setup import LLMSetupService
+from backend.app.services.task_manager import get_task_manager, TaskInfo
+from backend.app.services.translation_store import get_translation_store
+from backend.app.services.translator import TranslationService
+from backend.app.services.llm_setup import LLMSetupService
 from core.llm.config import FunctionKey
 from core.llm.manager import get_llm_manager
 from core.ocr.manager import get_ocr_manager

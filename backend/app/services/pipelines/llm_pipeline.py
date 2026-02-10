@@ -7,13 +7,13 @@ from typing import Optional
 
 import aiofiles
 
-from app.services.pdf_parser import PDFParser
-from app.services.translator import TranslationService
-from app.services.markdown_builder import MarkdownBuilder
-from app.services.post_processor import PostProcessor
-from app.services.text_processing import merge_text_blocks
-from app.services.text_processing import postprocess_translated_markdown
-from app.services.prompt_generator import (
+from backend.app.services.pdf_parser import PDFParser
+from backend.app.services.translator import TranslationService
+from backend.app.services.markdown_builder import MarkdownBuilder
+from backend.app.services.post_processor import PostProcessor
+from backend.app.services.text_processing import merge_text_blocks
+from backend.app.services.text_processing import postprocess_translated_markdown
+from backend.app.services.prompt_generator import (
     PromptProfile, generate_prompt_profile, extract_abstract_from_blocks,
 )
 from core.llm.config import FunctionKey
@@ -25,29 +25,40 @@ logger = logging.getLogger(__name__)
 class LLMPipeline(BasePipeline):
     """纯 LLM 管线：PyMuPDF 解析 → 分析摘要生成 prompt → 逐块翻译 → 组装 markdown"""
 
-    async def execute(self, file_content: bytes, filename: str) -> PipelineResult:
+    async def execute(self, file_content: bytes, filename: str, existing_parsed_pdf=None) -> PipelineResult:
         t0 = time.time()
         logger.info("🔤 LLM 管线启动（PyMuPDF 解析）...")
-        await self._emit("pdf_parsing", 30, {"message": "PyMuPDF 解析 PDF 中..."})
 
-        # 写入临时文件供 PyMuPDF 读取
-        temp_path = Path(f"temp/{filename}")
-        temp_path.parent.mkdir(exist_ok=True)
-        async with aiofiles.open(temp_path, "wb") as f:
-            await f.write(file_content)
+        temp_path = None
 
         try:
-            parser = PDFParser()
             translator = await TranslationService.from_manager(FunctionKey.TRANSLATION)
             builder = MarkdownBuilder()
 
-            parsed = await parser.process(temp_path)
-            total_pages = len(parsed.pages)
-            logger.info(f"   PDF 解析完成: {total_pages} 页")
-            await self._emit("pdf_parsed", 35, {
-                "message": f"PDF 解析完成: {total_pages} 页",
-                "total_pages": total_pages,
-            })
+            # 如果 OCRAgent 已解析，直接复用
+            if existing_parsed_pdf is not None:
+                parsed = existing_parsed_pdf
+                total_pages = len(parsed.pages)
+                logger.info(f"   复用已有 ParsedPDF: {total_pages} 页（跳过解析）")
+                await self._emit("pdf_parsed", 35, {
+                    "message": f"复用已有解析结果: {total_pages} 页",
+                    "total_pages": total_pages,
+                })
+            else:
+                await self._emit("pdf_parsing", 30, {"message": "PyMuPDF 解析 PDF 中..."})
+                temp_path = Path(f"temp/{filename}")
+                temp_path.parent.mkdir(exist_ok=True)
+                async with aiofiles.open(temp_path, "wb") as f:
+                    await f.write(file_content)
+
+                parser = PDFParser()
+                parsed = await parser.process(temp_path)
+                total_pages = len(parsed.pages)
+                logger.info(f"   PDF 解析完成: {total_pages} 页")
+                await self._emit("pdf_parsed", 35, {
+                    "message": f"PDF 解析完成: {total_pages} 页",
+                    "total_pages": total_pages,
+                })
 
             # Step 0: 提取摘要 → 生成定制化翻译 prompt
             if self.system_prompt:
@@ -132,7 +143,7 @@ class LLMPipeline(BasePipeline):
             )
         finally:
             # 清理临时文件
-            if temp_path.exists():
+            if temp_path and temp_path.exists():
                 try:
                     temp_path.unlink()
                 except Exception:

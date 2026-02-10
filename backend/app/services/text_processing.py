@@ -3,7 +3,7 @@
 从 pdf.py 提取的纯函数，供 Pipeline 层调用。
 """
 import re
-from app.services.pdf_parser import ContentBlock
+from backend.app.services.pdf_parser import ContentBlock
 
 
 # ── HTML Table → Markdown Table 转换 ──

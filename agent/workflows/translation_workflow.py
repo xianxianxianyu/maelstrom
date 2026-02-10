@@ -20,6 +20,7 @@ from backend.app.services.pipelines.base import CancellationToken
 # 显式导入所有 Agent 模块，触发 @agent_registry.register 装饰器
 import agent.agents.orchestrator_agent  # noqa: F401
 import agent.agents.terminology_agent   # noqa: F401
+import agent.agents.ocr_agent           # noqa: F401
 import agent.agents.translation_agent   # noqa: F401
 import agent.agents.review_agent        # noqa: F401
 import agent.agents.qa_agent            # noqa: F401

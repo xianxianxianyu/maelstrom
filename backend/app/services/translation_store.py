@@ -9,7 +9,7 @@ from typing import Any
 
 import aiofiles
 
-from app.services.image_utils import extract_base64_images
+from backend.app.services.image_utils import extract_base64_images
 
 logger = logging.getLogger(__name__)
 

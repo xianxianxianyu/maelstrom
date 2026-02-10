@@ -48,6 +48,7 @@ class OrchestratorAgent(BaseAgent):
     def __init__(
         self,
         terminology_agent: BaseAgent | None = None,
+        ocr_agent: BaseAgent | None = None,
         translation_agent: BaseAgent | None = None,
         review_agent: BaseAgent | None = None,
         translation_store: Any | None = None,
@@ -56,11 +57,13 @@ class OrchestratorAgent(BaseAgent):
 
         Args:
             terminology_agent: 可选的 TerminologyAgent 实例（依赖注入，用于测试）
+            ocr_agent: 可选的 OCRAgent 实例（依赖注入，用于测试）
             translation_agent: 可选的 TranslationAgent 实例（依赖注入，用于测试）
             review_agent: 可选的 ReviewAgent 实例（依赖注入，用于测试）
             translation_store: 可选的 TranslationStore 实例（依赖注入，用于测试）
         """
         self._terminology_agent = terminology_agent
+        self._ocr_agent = ocr_agent
         self._translation_agent = translation_agent
         self._review_agent = review_agent
         self._translation_store = translation_store
@@ -96,6 +99,18 @@ class OrchestratorAgent(BaseAgent):
         if self._translation_agent is not None:
             return self._translation_agent
         return agent_registry.create("TranslationAgent")
+
+    def _get_ocr_agent(self) -> BaseAgent:
+        """获取 OCRAgent 实例
+
+        如果未通过依赖注入提供，则从 agent_registry 创建。
+
+        Returns:
+            OCRAgent 实例
+        """
+        if self._ocr_agent is not None:
+            return self._ocr_agent
+        return agent_registry.create("OCRAgent")
 
     def _get_review_agent(self) -> BaseAgent:
         """获取 ReviewAgent 实例
@@ -143,20 +158,23 @@ class OrchestratorAgent(BaseAgent):
         # Phase 1: 术语准备
         await self._run_terminology_phase(ctx)
 
-        # Phase 2: 翻译
+        # Phase 2: 文档解析 + 预处理（OCRAgent）
+        await self._run_ocr_phase(ctx)
+
+        # Phase 3: 翻译
         await self._run_translation_phase(ctx)
 
-        # Phase 3: 审校
+        # Phase 4: 审校
         await self._run_review_phase(ctx)
 
-        # Phase 4: 质量不达标则修正重审（最多 1 次）
+        # Phase 5: 质量不达标则修正重审（最多 1 次）
         if (
             ctx.quality_report is not None
             and ctx.quality_report.score < QUALITY_THRESHOLD
         ):
             await self._auto_fix_and_review(ctx)
 
-        # Phase 5: 保存结果
+        # Phase 6: 保存结果
         await self._save_results(ctx)
 
         # 完成
@@ -249,8 +267,53 @@ class OrchestratorAgent(BaseAgent):
             },
         })
 
+    async def _run_ocr_phase(self, ctx: AgentContext) -> None:
+        """Phase 2: 文档解析 + 预处理
+
+        调用 OCRAgent 执行 PDF 解析/OCR + 跨页缝合 + 表格修复，
+        结果写入 ctx.parsed_pdf / ctx.ocr_md。
+
+        Args:
+            ctx: AgentContext
+
+        Raises:
+            Exception: 解析失败时向上传播
+        """
+        ctx.cancellation_token.check()
+
+        await ctx.event_bus.publish(ctx.task_id, {
+            "agent": "orchestrator",
+            "stage": "ocr",
+            "progress": 16,
+            "detail": {"message": "文档解析 + 预处理中..."},
+        })
+
+        ocr_agent = self._get_ocr_agent()
+
+        try:
+            ctx = await ocr_agent(ctx)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            await ctx.event_bus.publish(ctx.task_id, {
+                "agent": "orchestrator",
+                "stage": "ocr",
+                "progress": 16,
+                "detail": {"status": "failed", "error": str(e)},
+            })
+            raise
+
+        await ctx.event_bus.publish(ctx.task_id, {
+            "agent": "orchestrator",
+            "stage": "ocr",
+            "progress": 25,
+            "detail": {"message": "文档解析 + 预处理完成"},
+        })
+
+        logger.info("OCR phase complete: pipeline_type=%s", ctx.pipeline_type)
+
     async def _run_translation_phase(self, ctx: AgentContext) -> None:
-        """Phase 2: 翻译
+        """Phase 3: 翻译
 
         调用 TranslationAgent 执行翻译，结果写入 ctx.translated_md。
 
@@ -265,7 +328,7 @@ class OrchestratorAgent(BaseAgent):
         await ctx.event_bus.publish(ctx.task_id, {
             "agent": "orchestrator",
             "stage": "translation",
-            "progress": 20,
+            "progress": 26,
             "detail": {"message": "启动翻译管线..."},
         })
 
@@ -279,7 +342,7 @@ class OrchestratorAgent(BaseAgent):
             await ctx.event_bus.publish(ctx.task_id, {
                 "agent": "orchestrator",
                 "stage": "translation",
-                "progress": 20,
+                "progress": 26,
                 "detail": {"status": "failed", "error": str(e)},
             })
             raise
@@ -294,7 +357,7 @@ class OrchestratorAgent(BaseAgent):
         logger.info("Translation phase complete")
 
     async def _run_review_phase(self, ctx: AgentContext) -> None:
-        """Phase 3: 审校
+        """Phase 4: 审校
 
         调用 ReviewAgent 生成质量报告，结果写入 ctx.quality_report。
 
@@ -339,7 +402,7 @@ class OrchestratorAgent(BaseAgent):
         logger.info("Review phase complete: score=%s", score)
 
     async def _auto_fix_and_review(self, ctx: AgentContext) -> None:
-        """Phase 4: 自动修正 + 重新审校
+        """Phase 5: 自动修正 + 重新审校
 
         当质量报告评分低于 QUALITY_THRESHOLD 时，
         重新执行翻译（注入改进建议）和审校（最多 1 次）。
@@ -400,7 +463,7 @@ class OrchestratorAgent(BaseAgent):
         logger.info("Auto-fix complete: new score=%s", new_score)
 
     async def _save_results(self, ctx: AgentContext) -> None:
-        """Phase 5: 保存翻译结果
+        """Phase 6: 保存翻译结果
 
         将翻译结果和 QualityReport 保存到 TranslationStore。
 

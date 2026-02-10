@@ -9,7 +9,7 @@ Requirements: 5.5
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from backend.app.services.pipelines.base import CancellationToken
 from backend.app.services.prompt_generator import PromptProfile
@@ -17,6 +17,7 @@ from backend.app.services.prompt_generator import PromptProfile
 if TYPE_CHECKING:
     from agent.event_bus import EventBus
     from agent.models import QualityReport
+    from backend.app.services.pdf_parser import ParsedPDF
 
 
 @dataclass
@@ -24,7 +25,7 @@ class AgentContext:
     """Agent 间共享的执行上下文
 
     在翻译工作流中，OrchestratorAgent 创建 AgentContext 实例，
-    各 Agent（Translation、Review、Terminology）通过该上下文共享数据，
+    各 Agent（OCR、Translation、Review、Terminology）通过该上下文共享数据，
     避免重复计算。
 
     Attributes:
@@ -32,6 +33,9 @@ class AgentContext:
         filename: 上传的 PDF 文件名
         file_content: PDF 文件的原始字节内容
         event_bus: SSE 事件总线，用于推送进度事件
+        enable_ocr: 是否启用 OCR 管线
+        pipeline_type: OCRAgent 选定的管线类型 ("llm" | "ocr")
+        parsed_pdf: LLM 管线解析后的结构化 PDF（OCRAgent 填充）
         glossary: 领域术语表 {英文术语: 中文翻译}
         prompt_profile: LLM 生成的翻译配置（含术语、领域、prompt）
         translated_md: 翻译后的 Markdown 文本
@@ -44,6 +48,8 @@ class AgentContext:
     file_content: bytes
     event_bus: EventBus
     enable_ocr: bool = False
+    pipeline_type: str = ""
+    parsed_pdf: ParsedPDF | None = None
     glossary: dict[str, str] = field(default_factory=dict)
     prompt_profile: PromptProfile | None = None
     translated_md: str = ""

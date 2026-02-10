@@ -55,6 +55,19 @@ def _make_mock_terminology_agent(glossary_result: dict | None = None):
     return agent
 
 
+def _make_mock_ocr_agent():
+    """Create a mock OCRAgent that sets pipeline_type on ctx."""
+    agent = AsyncMock()
+    agent.name = "ocr"
+
+    async def ocr_side_effect(ctx, **kwargs):
+        ctx.pipeline_type = "llm"
+        return ctx
+
+    agent.side_effect = ocr_side_effect
+    return agent
+
+
 def _make_mock_translation_agent(translated_md: str = "翻译结果"):
     """Create a mock TranslationAgent that sets translated_md on ctx."""
     agent = AsyncMock()
@@ -121,6 +134,7 @@ def agent():
             ],
             "conflicts": [],
         }),
+        ocr_agent=_make_mock_ocr_agent(),
         translation_agent=_make_mock_translation_agent("翻译后的文本"),
         review_agent=_make_mock_review_agent(score=85),
         translation_store=_make_mock_store(),
@@ -159,12 +173,17 @@ class TestWorkflowOrder:
 
     @pytest.mark.asyncio
     async def test_agents_called_in_order(self, ctx: AgentContext):
-        """Agents should be called: terminology → translation → review."""
+        """Agents should be called: terminology → ocr → translation → review."""
         call_order = []
 
         async def term_side_effect(input_data, **kwargs):
             call_order.append("terminology")
             return {"glossary": [], "conflicts": []}
+
+        async def ocr_side_effect(input_data, **kwargs):
+            call_order.append("ocr")
+            input_data.pipeline_type = "llm"
+            return input_data
 
         async def trans_side_effect(input_data, **kwargs):
             call_order.append("translation")
@@ -177,11 +196,13 @@ class TestWorkflowOrder:
             return input_data
 
         term_agent = AsyncMock(side_effect=term_side_effect)
+        ocr_agent = AsyncMock(side_effect=ocr_side_effect)
         trans_agent = AsyncMock(side_effect=trans_side_effect)
         review_agent = AsyncMock(side_effect=review_side_effect)
 
         orch = OrchestratorAgent(
             terminology_agent=term_agent,
+            ocr_agent=ocr_agent,
             translation_agent=trans_agent,
             review_agent=review_agent,
             translation_store=_make_mock_store(),
@@ -189,14 +210,15 @@ class TestWorkflowOrder:
 
         await orch.run(ctx)
 
-        assert call_order == ["terminology", "translation", "review"]
+        assert call_order == ["terminology", "ocr", "translation", "review"]
 
     @pytest.mark.asyncio
-    async def test_all_three_agents_called(self, agent, ctx):
-        """All three sub-agents should be called exactly once."""
+    async def test_all_four_agents_called(self, agent, ctx):
+        """All four sub-agents should be called exactly once."""
         await agent.run(ctx)
 
         agent._terminology_agent.assert_called_once()
+        agent._ocr_agent.assert_called_once()
         agent._translation_agent.assert_called_once()
         agent._review_agent.assert_called_once()
 
@@ -224,6 +246,7 @@ class TestSSEEvents:
 
         stages = [e["stage"] for e in events]
         assert "terminology" in stages
+        assert "ocr" in stages
         assert "translation" in stages
         assert "review" in stages
         assert "saving" in stages
@@ -316,6 +339,7 @@ class TestAutoFix:
 
         orch = OrchestratorAgent(
             terminology_agent=_make_mock_terminology_agent(),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=AsyncMock(side_effect=trans_side_effect),
             review_agent=AsyncMock(side_effect=review_side_effect),
             translation_store=_make_mock_store(),
@@ -335,6 +359,7 @@ class TestAutoFix:
         """No auto-fix when score == 70 (threshold is strictly less than)."""
         orch = OrchestratorAgent(
             terminology_agent=_make_mock_terminology_agent(),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(score=70),
             translation_store=_make_mock_store(),
@@ -374,6 +399,7 @@ class TestAutoFix:
 
         orch = OrchestratorAgent(
             terminology_agent=_make_mock_terminology_agent(),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=AsyncMock(side_effect=trans_side_effect),
             review_agent=AsyncMock(side_effect=review_side_effect),
             translation_store=_make_mock_store(),
@@ -395,6 +421,7 @@ class TestAutoFix:
 
         orch = OrchestratorAgent(
             terminology_agent=_make_mock_terminology_agent(),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(score=50),
             translation_store=_make_mock_store(),
@@ -441,6 +468,7 @@ class TestCancellation:
 
         orch = OrchestratorAgent(
             terminology_agent=AsyncMock(side_effect=term_side_effect),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(),
             translation_store=_make_mock_store(),
@@ -460,6 +488,7 @@ class TestCancellation:
 
         orch = OrchestratorAgent(
             terminology_agent=_make_mock_terminology_agent(),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=AsyncMock(side_effect=trans_side_effect),
             review_agent=_make_mock_review_agent(),
             translation_store=_make_mock_store(),
@@ -487,6 +516,7 @@ class TestAgentFailureHandling:
 
         orch = OrchestratorAgent(
             terminology_agent=AsyncMock(side_effect=term_side_effect),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(),
             translation_store=_make_mock_store(),
@@ -506,6 +536,7 @@ class TestAgentFailureHandling:
 
         orch = OrchestratorAgent(
             terminology_agent=_make_mock_terminology_agent(),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=AsyncMock(side_effect=trans_side_effect),
             review_agent=_make_mock_review_agent(),
             translation_store=_make_mock_store(),
@@ -522,6 +553,7 @@ class TestAgentFailureHandling:
 
         orch = OrchestratorAgent(
             terminology_agent=_make_mock_terminology_agent(),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=AsyncMock(side_effect=review_side_effect),
             translation_store=_make_mock_store(),
@@ -544,6 +576,7 @@ class TestAgentFailureHandling:
 
         orch = OrchestratorAgent(
             terminology_agent=_make_mock_terminology_agent(),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=AsyncMock(side_effect=trans_side_effect),
             review_agent=_make_mock_review_agent(score=50),
             translation_store=_make_mock_store(),
@@ -562,6 +595,7 @@ class TestAgentFailureHandling:
 
         orch = OrchestratorAgent(
             terminology_agent=_make_mock_terminology_agent(),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(),
             translation_store=mock_store,
@@ -609,6 +643,7 @@ class TestSaveResults:
 
         orch = OrchestratorAgent(
             terminology_agent=_make_mock_terminology_agent(),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=AsyncMock(side_effect=review_side_effect),
             translation_store=_make_mock_store(),
@@ -638,6 +673,7 @@ class TestContextDataFlow:
                 ],
                 "conflicts": [],
             }),
+            ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(),
             translation_store=_make_mock_store(),

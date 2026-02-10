@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from app.services.prompt_generator import PromptProfile
+from backend.app.services.prompt_generator import PromptProfile
 
 logger = logging.getLogger(__name__)
 

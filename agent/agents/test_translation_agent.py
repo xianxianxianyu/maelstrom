@@ -2,31 +2,22 @@
 
 Unit tests covering:
 - Registration in agent_registry
-- _analyze_document with mock PDF content
-- _select_pipeline logic (scanned/native, OCR availability)
 - _generate_prompt with glossary injection
 - _execute_with_retry with failures and retries
 - Cancellation token check
 - Progress events published via EventBus
+- Full run() flow (prompt generation → translation execution)
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 
-from agent.agents.translation_agent import (
-    TranslationAgent,
-    DocumentAnalysis,
-    _count_formulas,
-    _count_tables,
-    _detect_language_distribution,
-)
+from agent.agents.translation_agent import TranslationAgent
 from agent.context import AgentContext
 from agent.event_bus import EventBus
 from agent.registry import agent_registry
@@ -75,13 +66,17 @@ async def agent(mock_ocr_tool, mock_translate_tool):
 
 @pytest_asyncio.fixture
 async def ctx(event_bus):
-    """Create a minimal AgentContext for testing."""
+    """Create a minimal AgentContext for testing.
+
+    pipeline_type is pre-set to 'llm' to simulate OCRAgent having run first.
+    """
     return AgentContext(
         task_id="test-task-001",
         filename="test.pdf",
         file_content=b"%PDF-1.4 fake content",
         event_bus=event_bus,
         glossary={"Transformer": "Transformer模型", "attention": "注意力"},
+        pipeline_type="llm",
     )
 
 
@@ -105,190 +100,6 @@ class TestRegistration:
         """description property should be non-empty."""
         assert agent.description
         assert isinstance(agent.description, str)
-
-
-# ---------------------------------------------------------------------------
-# Tests: Helper functions
-# ---------------------------------------------------------------------------
-
-
-class TestHelperFunctions:
-    """Test module-level helper functions."""
-
-    def test_count_formulas_inline(self):
-        """Should count inline math $...$."""
-        text = "The formula $E=mc^2$ and $a+b=c$ are important."
-        count, total = _count_formulas(text)
-        assert count == 2
-        assert total == len(text)
-
-    def test_count_formulas_display(self):
-        """Should count display math $$...$$."""
-        text = "Here is:\n$$\\int_0^1 f(x) dx$$\nand more."
-        count, total = _count_formulas(text)
-        assert count >= 1
-
-    def test_count_formulas_empty(self):
-        """No formulas should return 0."""
-        count, total = _count_formulas("No formulas here.")
-        assert count == 0
-
-    def test_count_tables_basic(self):
-        """Should count a basic markdown table."""
-        text = "| A | B |\n|---|---|\n| 1 | 2 |\n\nSome text."
-        assert _count_tables(text) == 1
-
-    def test_count_tables_multiple(self):
-        """Should count multiple tables."""
-        text = (
-            "| A | B |\n|---|---|\n| 1 | 2 |\n\n"
-            "Some text.\n\n"
-            "| X | Y |\n|---|---|\n| 3 | 4 |"
-        )
-        assert _count_tables(text) == 2
-
-    def test_count_tables_none(self):
-        """No tables should return 0."""
-        assert _count_tables("No tables here.") == 0
-
-    def test_language_distribution_english(self):
-        """Mostly English text."""
-        dist = _detect_language_distribution("Hello world this is English text")
-        assert dist["en"] > 0.5
-        assert dist["zh"] == 0.0
-
-    def test_language_distribution_chinese(self):
-        """Mostly Chinese text."""
-        dist = _detect_language_distribution("这是一段中文文本用于测试")
-        assert dist["zh"] > 0.5
-
-    def test_language_distribution_empty(self):
-        """Empty text should return all zeros."""
-        dist = _detect_language_distribution("")
-        assert dist["en"] == 0.0
-        assert dist["zh"] == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Tests: _analyze_document
-# ---------------------------------------------------------------------------
-
-
-class TestAnalyzeDocument:
-    """Test document analysis with mocked PyMuPDF."""
-
-    @pytest.mark.asyncio
-    async def test_analyze_native_pdf(self, agent: TranslationAgent, ctx: AgentContext):
-        """PDF with extractable text should be classified as 'native'."""
-        long_text = "This is a native PDF with lots of text. " * 20
-
-        mock_page = MagicMock()
-        mock_page.get_text.return_value = long_text
-
-        mock_doc = MagicMock()
-        mock_doc.__iter__ = MagicMock(return_value=iter([mock_page]))
-        mock_doc.close = MagicMock()
-
-        with patch(
-            "agent.agents.translation_agent.fitz",
-            create=True,
-        ) as mock_fitz_module:
-            # We need to patch the import inside the method
-            import agent.agents.translation_agent as ta_module
-
-            original_analyze = ta_module.TranslationAgent._analyze_document
-
-            async def patched_analyze(self_agent, context):
-                # Simulate what _analyze_document does with fitz
-                analysis = DocumentAnalysis()
-                extracted_text = long_text
-                if len(extracted_text.strip()) >= self_agent.NATIVE_TEXT_THRESHOLD:
-                    analysis.doc_type = "native"
-                else:
-                    analysis.doc_type = "scanned"
-                formula_count, total_chars = _count_formulas(extracted_text)
-                analysis.formula_density = round(
-                    formula_count / max(total_chars, 1), 6
-                )
-                analysis.table_count = _count_tables(extracted_text)
-                analysis.language_distribution = _detect_language_distribution(
-                    extracted_text
-                )
-                return analysis
-
-            with patch.object(
-                TranslationAgent, "_analyze_document", patched_analyze
-            ):
-                result = await patched_analyze(agent, ctx)
-
-            assert result.doc_type == "native"
-            assert result.formula_density >= 0
-            assert result.table_count >= 0
-            assert "en" in result.language_distribution
-
-    @pytest.mark.asyncio
-    async def test_analyze_scanned_pdf(
-        self, agent: TranslationAgent, ctx: AgentContext
-    ):
-        """PDF with little extractable text should be classified as 'scanned'."""
-        # Simulate fitz not being available
-        with patch.dict("sys.modules", {"fitz": None}):
-            # Force re-import to pick up the patched module
-            result = await agent._analyze_document(ctx)
-
-        assert result.doc_type == "scanned"
-        assert result.formula_density >= 0
-        assert result.table_count >= 0
-
-    @pytest.mark.asyncio
-    async def test_analyze_returns_complete_fields(
-        self, agent: TranslationAgent, ctx: AgentContext
-    ):
-        """Analysis result should contain all required fields."""
-        with patch.dict("sys.modules", {"fitz": None}):
-            result = await agent._analyze_document(ctx)
-
-        d = result.to_dict()
-        assert "doc_type" in d
-        assert "language_distribution" in d
-        assert "formula_density" in d
-        assert "table_count" in d
-        assert d["doc_type"] in ("scanned", "native")
-        assert d["formula_density"] >= 0
-        assert d["table_count"] >= 0
-
-
-# ---------------------------------------------------------------------------
-# Tests: _select_pipeline
-# ---------------------------------------------------------------------------
-
-
-class TestSelectPipeline:
-    """Test pipeline selection logic."""
-
-    def test_native_pdf_selects_llm(self, agent: TranslationAgent, ctx: AgentContext):
-        """Native PDF should always select 'llm' pipeline."""
-        analysis = DocumentAnalysis(doc_type="native")
-        result = agent._select_pipeline(analysis, ctx)
-        assert result == "llm"
-
-    def test_scanned_pdf_with_ocr_selects_ocr(
-        self, agent: TranslationAgent, ctx: AgentContext
-    ):
-        """Scanned PDF with OCR available should select 'ocr' pipeline."""
-        analysis = DocumentAnalysis(doc_type="scanned")
-        with patch.object(agent, "_is_ocr_available", return_value=True):
-            result = agent._select_pipeline(analysis, ctx)
-        assert result == "ocr"
-
-    def test_scanned_pdf_without_ocr_falls_back_to_llm(
-        self, agent: TranslationAgent, ctx: AgentContext
-    ):
-        """Scanned PDF without OCR should fall back to 'llm' pipeline."""
-        analysis = DocumentAnalysis(doc_type="scanned")
-        with patch.object(agent, "_is_ocr_available", return_value=False):
-            result = agent._select_pipeline(analysis, ctx)
-        assert result == "llm"
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +145,7 @@ class TestGeneratePrompt:
             file_content=b"%PDF-1.4",
             event_bus=event_bus,
             glossary={},
+            pipeline_type="llm",
         )
         profile = await agent._generate_prompt(ctx)
         assert isinstance(profile, PromptProfile)
@@ -460,21 +272,14 @@ class TestRunFlow:
     """Test the complete run() method."""
 
     @pytest.mark.asyncio
-    async def test_full_run_publishes_all_stages(
+    async def test_full_run_publishes_stages(
         self, agent: TranslationAgent, ctx: AgentContext, event_bus: EventBus
     ):
-        """run() should publish events for all stages."""
+        """run() should publish events for prompt_generation, translating, complete."""
         queue = event_bus.subscribe(ctx.task_id)
         expected_result = PipelineResult(translated_md="完整翻译结果")
 
         with patch.object(
-            agent,
-            "_analyze_document",
-            new_callable=AsyncMock,
-            return_value=DocumentAnalysis(doc_type="native"),
-        ), patch.object(
-            agent, "_select_pipeline", return_value="llm"
-        ), patch.object(
             agent,
             "_generate_prompt",
             new_callable=AsyncMock,
@@ -499,11 +304,7 @@ class TestRunFlow:
         while not queue.empty():
             events.append(await queue.get())
 
-        # Should have events for: analysis, pipeline_selection,
-        # prompt_generation, translating, complete
         stages = [e["stage"] for e in events]
-        assert "analysis" in stages
-        assert "pipeline_selection" in stages
         assert "prompt_generation" in stages
         assert "translating" in stages
         assert "complete" in stages
@@ -518,20 +319,6 @@ class TestRunFlow:
             assert progress_values[i] >= progress_values[i - 1]
 
     @pytest.mark.asyncio
-    async def test_run_cancellation_at_analysis(
-        self, agent: TranslationAgent, ctx: AgentContext
-    ):
-        """Cancellation after analysis should stop execution."""
-
-        async def mock_analyze(context):
-            ctx.cancellation_token.cancel()
-            return DocumentAnalysis(doc_type="native")
-
-        with patch.object(agent, "_analyze_document", side_effect=mock_analyze):
-            with pytest.raises(asyncio.CancelledError):
-                await agent.run(ctx)
-
-    @pytest.mark.asyncio
     async def test_run_sets_translated_md(
         self, agent: TranslationAgent, ctx: AgentContext
     ):
@@ -539,13 +326,6 @@ class TestRunFlow:
         expected_result = PipelineResult(translated_md="翻译后的文本")
 
         with patch.object(
-            agent,
-            "_analyze_document",
-            new_callable=AsyncMock,
-            return_value=DocumentAnalysis(doc_type="native"),
-        ), patch.object(
-            agent, "_select_pipeline", return_value="llm"
-        ), patch.object(
             agent,
             "_generate_prompt",
             new_callable=AsyncMock,
@@ -573,13 +353,6 @@ class TestRunFlow:
 
         with patch.object(
             agent,
-            "_analyze_document",
-            new_callable=AsyncMock,
-            return_value=DocumentAnalysis(doc_type="native"),
-        ), patch.object(
-            agent, "_select_pipeline", return_value="llm"
-        ), patch.object(
-            agent,
             "_generate_prompt",
             new_callable=AsyncMock,
             return_value=profile,
@@ -594,33 +367,91 @@ class TestRunFlow:
         assert ctx.prompt_profile is profile
         assert ctx.prompt_profile.domain == "CV"
 
-
-# ---------------------------------------------------------------------------
-# Tests: DocumentAnalysis dataclass
-# ---------------------------------------------------------------------------
-
-
-class TestDocumentAnalysis:
-    """Test DocumentAnalysis dataclass."""
-
-    def test_to_dict(self):
-        """to_dict should return all fields."""
-        analysis = DocumentAnalysis(
-            doc_type="native",
-            language_distribution={"en": 0.8, "zh": 0.1, "other": 0.1},
-            formula_density=0.05,
-            table_count=3,
+    @pytest.mark.asyncio
+    async def test_auto_fix_rerun_skips_prompt_generation(
+        self, agent: TranslationAgent, ctx: AgentContext
+    ):
+        """When prompt_profile exists and translated_md is set, should skip prompt generation."""
+        ctx.prompt_profile = PromptProfile(
+            domain="NLP", translation_prompt="existing prompt"
         )
-        d = analysis.to_dict()
-        assert d["doc_type"] == "native"
-        assert d["formula_density"] == 0.05
-        assert d["table_count"] == 3
-        assert d["language_distribution"]["en"] == 0.8
+        ctx.translated_md = "旧翻译"
 
-    def test_defaults(self):
-        """Default values should be sensible."""
-        analysis = DocumentAnalysis()
-        assert analysis.doc_type == "scanned"
-        assert analysis.formula_density == 0.0
-        assert analysis.table_count == 0
-        assert analysis.language_distribution == {}
+        expected_result = PipelineResult(translated_md="修正翻译")
+
+        with patch.object(
+            agent,
+            "_generate_prompt",
+            new_callable=AsyncMock,
+        ) as mock_gen, patch.object(
+            agent,
+            "_execute_with_retry",
+            new_callable=AsyncMock,
+            return_value=expected_result,
+        ):
+            result = await agent.run(ctx)
+
+        # _generate_prompt should NOT have been called
+        mock_gen.assert_not_called()
+        assert result.translated_md == "修正翻译"
+
+    @pytest.mark.asyncio
+    async def test_run_uses_pipeline_type_from_context(
+        self, agent: TranslationAgent, event_bus: EventBus
+    ):
+        """run() should use ctx.pipeline_type set by OCRAgent."""
+        ctx = AgentContext(
+            task_id="test-003",
+            filename="test.pdf",
+            file_content=b"%PDF-1.4",
+            event_bus=event_bus,
+            pipeline_type="ocr",
+        )
+        expected_result = PipelineResult(translated_md="OCR翻译结果")
+
+        with patch.object(
+            agent,
+            "_generate_prompt",
+            new_callable=AsyncMock,
+            return_value=PromptProfile(translation_prompt="prompt"),
+        ), patch.object(
+            agent,
+            "_execute_with_retry",
+            new_callable=AsyncMock,
+            return_value=expected_result,
+        ) as mock_retry:
+            await agent.run(ctx)
+
+        # Should have been called with "ocr" pipeline type
+        mock_retry.assert_called_once()
+        assert mock_retry.call_args[0][0] == "ocr"
+
+    @pytest.mark.asyncio
+    async def test_run_defaults_to_llm_pipeline(
+        self, agent: TranslationAgent, event_bus: EventBus
+    ):
+        """run() should default to 'llm' when pipeline_type is empty."""
+        ctx = AgentContext(
+            task_id="test-004",
+            filename="test.pdf",
+            file_content=b"%PDF-1.4",
+            event_bus=event_bus,
+            pipeline_type="",
+        )
+        expected_result = PipelineResult(translated_md="LLM翻译结果")
+
+        with patch.object(
+            agent,
+            "_generate_prompt",
+            new_callable=AsyncMock,
+            return_value=PromptProfile(translation_prompt="prompt"),
+        ), patch.object(
+            agent,
+            "_execute_with_retry",
+            new_callable=AsyncMock,
+            return_value=expected_result,
+        ) as mock_retry:
+            await agent.run(ctx)
+
+        mock_retry.assert_called_once()
+        assert mock_retry.call_args[0][0] == "llm"

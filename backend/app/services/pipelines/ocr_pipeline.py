@@ -6,17 +6,17 @@ import logging
 import time
 from typing import Optional
 
-from app.services.translator import TranslationService
-from app.services.ocr_service import OCRService
-from app.services.post_processor import PostProcessor
-from app.services.text_processing import (
+from backend.app.services.translator import TranslationService
+from backend.app.services.ocr_service import OCRService
+from backend.app.services.post_processor import PostProcessor
+from backend.app.services.text_processing import (
     split_md_segments,
     preprocess_ocr_markdown,
     protect_inline_latex,
     restore_inline_latex,
     postprocess_translated_markdown,
 )
-from app.services.prompt_generator import (
+from backend.app.services.prompt_generator import (
     PromptProfile, generate_prompt_profile, extract_abstract_from_markdown,
 )
 from core.llm.config import FunctionKey

@@ -50,20 +50,63 @@ class ReviewAgent(BaseAgent):
         """
         ctx = input_data
 
+        # 发布开始事件
+        await ctx.event_bus.publish(ctx.task_id, {
+            "agent": "review",
+            "stage": "review",
+            "progress": 71,
+            "detail": {"message": "开始质量审校..."},
+        })
+
         # 1. 术语一致性检查
+        await ctx.event_bus.publish(ctx.task_id, {
+            "agent": "review",
+            "stage": "terminology_check",
+            "progress": 74,
+            "detail": {"message": "检查术语一致性..."},
+        })
         term_issues = self._check_terminology_consistency(
             ctx.translated_md, ctx.glossary
         )
 
+        ctx.cancellation_token.check()
+
         # 2. 格式完整性检查
+        await ctx.event_bus.publish(ctx.task_id, {
+            "agent": "review",
+            "stage": "format_check",
+            "progress": 78,
+            "detail": {"message": "检查格式完整性..."},
+        })
         format_issues = self._check_format_integrity(ctx.translated_md)
 
+        ctx.cancellation_token.check()
+
         # 3. 未翻译段落检测
+        await ctx.event_bus.publish(ctx.task_id, {
+            "agent": "review",
+            "stage": "untranslated_check",
+            "progress": 82,
+            "detail": {"message": "检测未翻译段落..."},
+        })
         untranslated = self._detect_untranslated(ctx.translated_md)
 
         # 4. 生成质量报告
         report = self._build_quality_report(term_issues, format_issues, untranslated)
         ctx.quality_report = report
+
+        await ctx.event_bus.publish(ctx.task_id, {
+            "agent": "review",
+            "stage": "review",
+            "progress": 85,
+            "detail": {
+                "message": f"审校完成: 评分 {report.score}, 术语问题 {len(report.terminology_issues)}, 格式问题 {len(report.format_issues)}, 未翻译 {len(report.untranslated)}",
+                "score": report.score,
+                "term_issues": len(report.terminology_issues),
+                "format_issues": len(report.format_issues),
+                "untranslated": len(report.untranslated),
+            },
+        })
 
         logger.info(
             "Review complete: score=%d, term_issues=%d, format_issues=%d, untranslated=%d",
@@ -74,6 +117,7 @@ class ReviewAgent(BaseAgent):
         )
 
         return ctx
+
 
     # ------------------------------------------------------------------
     # Internal methods
