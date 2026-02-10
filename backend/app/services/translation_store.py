@@ -100,6 +100,12 @@ class TranslationStore:
         async with aiofiles.open(folder / "meta.json", "w", encoding="utf-8") as f:
             await f.write(json.dumps(entry, ensure_ascii=False, indent=2))
 
+        # 如果 meta_extra 包含 quality_report，单独保存为 quality_report.json
+        if meta_extra and "quality_report" in meta_extra:
+            qr_path = folder / "quality_report.json"
+            async with aiofiles.open(qr_path, "w", encoding="utf-8") as f:
+                await f.write(json.dumps(meta_extra["quality_report"], ensure_ascii=False, indent=2))
+
         # 更新 index.json
         await self._update_index(lambda d: d["entries"].insert(0, entry))
 
@@ -112,7 +118,7 @@ class TranslationStore:
         return data.get("entries", [])
 
     async def get_entry(self, tid: str) -> dict | None:
-        """返回指定翻译的 markdown + meta"""
+        """返回指定翻译的 markdown + meta + quality_report"""
         folder = TRANSLATION_DIR / tid
         if not folder.is_dir():
             return None
@@ -133,6 +139,11 @@ class TranslationStore:
         if meta_path.exists():
             async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
                 result["meta"] = json.loads(await f.read())
+
+        qr_path = folder / "quality_report.json"
+        if qr_path.exists():
+            async with aiofiles.open(qr_path, "r", encoding="utf-8") as f:
+                result["quality_report"] = json.loads(await f.read())
 
         return result if result else None
 

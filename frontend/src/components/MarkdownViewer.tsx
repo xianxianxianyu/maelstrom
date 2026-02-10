@@ -5,9 +5,12 @@ import rehypeRaw from "rehype-raw"
 import rehypeKatex from "rehype-katex"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
-import { useMemo, type ReactNode } from "react"
+import { useMemo, type CSSProperties } from "react"
+import { useReaderSettings } from "@/contexts/ReaderSettingsContext"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:3301"
+
+const WIDTH_MAP = { compact: "680px", standard: "860px", wide: "none" } as const
 
 interface Props {
   content: string
@@ -15,6 +18,8 @@ interface Props {
 }
 
 export function MarkdownViewer({ content, translationId }: Props) {
+  const { fontSize, fontFamily, lineHeight, contentWidth } = useReaderSettings()
+
   const processedContent = useMemo(() => {
     let text = content
     if (translationId) {
@@ -26,22 +31,29 @@ export function MarkdownViewer({ content, translationId }: Props) {
     return text
   }, [content, translationId])
 
+  const style: CSSProperties = {
+    "--reader-font-size": `${fontSize}px`,
+    "--reader-font-family": fontFamily,
+    "--reader-line-height": String(lineHeight),
+    "--reader-max-width": WIDTH_MAP[contentWidth],
+  } as CSSProperties
+
   return (
-    <article className="markdown-viewer p-6 md:p-8 bg-white border border-gray-200 rounded-lg shadow-sm">
-      <div className="prose prose-gray prose-sm max-w-none
+    <article className="markdown-viewer p-6 md:p-8 bg-white border border-gray-200 rounded-lg shadow-sm" style={style}>
+      <div className="prose prose-gray max-w-none reader-styled
         prose-headings:font-semibold prose-headings:tracking-tight
-        prose-h1:text-2xl prose-h1:border-b prose-h1:border-gray-200 prose-h1:pb-2 prose-h1:mb-6
-        prose-h2:text-xl prose-h2:mt-10 prose-h2:mb-3
-        prose-h3:text-lg prose-h3:mt-8 prose-h3:mb-2
-        prose-h4:text-base prose-h4:mt-6
-        prose-p:leading-[1.8] prose-p:mb-4 prose-p:text-gray-700
+        prose-h1:border-b prose-h1:border-gray-200 prose-h1:pb-2 prose-h1:mb-6
+        prose-h2:mt-10 prose-h2:mb-3
+        prose-h3:mt-8 prose-h3:mb-2
+        prose-h4:mt-6
+        prose-p:text-gray-700
         prose-a:text-indigo-600 prose-a:no-underline hover:prose-a:underline
         prose-strong:text-gray-900
         prose-blockquote:border-l-indigo-300 prose-blockquote:bg-indigo-50/50 prose-blockquote:py-1 prose-blockquote:text-gray-600 prose-blockquote:not-italic
-        prose-code:text-sm prose-code:bg-gray-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
+        prose-code:bg-gray-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
         prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:shadow-sm
         prose-img:rounded-lg prose-img:shadow-md prose-img:mx-auto prose-img:max-w-full prose-img:my-6
-        prose-table:text-xs prose-table:border-collapse
+        prose-table:border-collapse
         prose-th:bg-gray-50 prose-th:font-semibold prose-th:text-gray-700 prose-th:border prose-th:border-gray-200 prose-th:px-3 prose-th:py-2
         prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-2
       ">
@@ -97,7 +109,6 @@ export function MarkdownViewer({ content, translationId }: Props) {
                 {children}
               </sup>
             ),
-            // figcaption div from backend postprocess
             div: ({ className, children, ...props }) => {
               if (className === "figcaption") {
                 return (

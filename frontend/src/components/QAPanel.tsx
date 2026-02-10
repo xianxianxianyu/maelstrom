@@ -1,21 +1,36 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
-import { askQuestion } from "@/lib/api"
+import { useState, useEffect, useRef, useMemo } from "react"
+import { askQuestion, QAResponse } from "@/lib/api"
 import { useLLMConfig } from "@/contexts/LLMConfigContext"
+
+interface Citation {
+  text: string
+  source: string
+}
 
 interface Message {
   role: "user" | "assistant"
   content: string
+  citations?: Citation[]
 }
 
-export function QAPanel() {
+interface Props {
+  docId?: string
+}
+
+function generateSessionId(): string {
+  return "sess_" + Math.random().toString(36).substring(2, 15) + Date.now().toString(36)
+}
+
+export function QAPanel({ docId }: Props) {
   const { profileNames, bindings } = useLLMConfig()
   const [selectedProfile, setSelectedProfile] = useState("")
   const [input, setInput] = useState("")
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const sessionId = useMemo(() => generateSessionId(), [])
 
   // 当 context 中的 profileNames/bindings 变化时，自动选中合适的档案
   useEffect(() => {
@@ -37,10 +52,11 @@ export function QAPanel() {
     setMessages((prev) => [...prev, { role: "user", content: q }])
     setLoading(true)
     try {
-      const res = await askQuestion(q, selectedProfile)
+      const res: QAResponse = await askQuestion(q, selectedProfile, undefined, sessionId, docId)
       setMessages((prev) => [...prev, {
         role: "assistant",
         content: res.answer,
+        citations: res.citations,
       }])
     } catch (err: any) {
       setMessages((prev) => [...prev, {
@@ -79,14 +95,37 @@ export function QAPanel() {
           </div>
         )}
         {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[85%] px-3 py-2 rounded-xl text-xs leading-relaxed ${
-              msg.role === "user"
-                ? "bg-indigo-600 text-white rounded-br-sm"
-                : "bg-gray-100 text-gray-700 rounded-bl-sm"
-            }`}>
-              <div className="whitespace-pre-wrap">{msg.content}</div>
+          <div key={i}>
+            <div className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[85%] px-3 py-2 rounded-xl text-xs leading-relaxed ${
+                msg.role === "user"
+                  ? "bg-indigo-600 text-white rounded-br-sm"
+                  : "bg-gray-100 text-gray-700 rounded-bl-sm"
+              }`}>
+                <div className="whitespace-pre-wrap">{msg.content}</div>
+              </div>
             </div>
+            {/* 引用来源 */}
+            {msg.role === "assistant" && msg.citations && msg.citations.length > 0 && (
+              <div className="flex justify-start mt-1 ml-1">
+                <div className="max-w-[85%] space-y-0.5">
+                  <p className="text-[10px] text-gray-400 font-medium">引用来源:</p>
+                  {msg.citations.map((cite, j) => (
+                    <button
+                      key={j}
+                      className="block text-[10px] text-indigo-500 hover:text-indigo-700 hover:underline transition truncate max-w-full text-left"
+                      title={cite.text}
+                      onClick={() => {
+                        // 滚动到引用或展示引用内容
+                        alert(`引用来源: ${cite.source}\n\n${cite.text}`)
+                      }}
+                    >
+                      📄 {cite.source}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ))}
         {loading && (

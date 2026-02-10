@@ -46,6 +46,9 @@ from app.api.routes import llm_config as llm_config_route
 from app.api.routes import ocr_config as ocr_config_route
 from app.api.routes import translations as translations_route
 from app.api.routes import agent as agent_route
+from app.api.routes import sse as sse_route
+from app.api.routes import terminology as terminology_route
+from app.api.routes import quality as quality_route
 from core.llm import get_llm_manager, load_config_data
 from core.ocr import get_ocr_manager, load_ocr_config_data
 from app.core.key_store import key_store
@@ -53,8 +56,8 @@ from app.core.key_store import key_store
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="PDF to Markdown Translator",
-    description="Translate PDF documents to Markdown with extracted images",
+    title="Maelstrom",
+    description="Multi-agent PDF translation system — devour documents, distill knowledge",
     version="1.0.0"
 )
 
@@ -75,12 +78,15 @@ app.include_router(llm_config_route.router)
 app.include_router(ocr_config_route.router)
 app.include_router(translations_route.router)
 app.include_router(agent_route.router)
+app.include_router(sse_route.router)
+app.include_router(terminology_route.router)
+app.include_router(quality_route.router)
 
 
 @app.get("/")
 async def root():
     return {
-        "message": "PDF to Markdown Translator API",
+        "message": "Maelstrom API",
         "version": "1.0.0",
         "endpoints": {
             "upload": "/api/pdf/upload",

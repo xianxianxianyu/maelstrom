@@ -3,7 +3,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from app.services.prompt_generator import PromptProfile
 
@@ -48,9 +48,25 @@ class BasePipeline(ABC):
     # 并发翻译的最大并行数
     CONCURRENCY = 5
 
-    def __init__(self, system_prompt: Optional[str] = None, token: Optional[CancellationToken] = None):
+    def __init__(
+        self,
+        system_prompt: Optional[str] = None,
+        token: Optional[CancellationToken] = None,
+        event_bus: Optional[Any] = None,
+        task_id: Optional[str] = None,
+    ):
         self.system_prompt = system_prompt
         self.token = token or CancellationToken()
+        self.event_bus = event_bus
+        self.task_id = task_id
+
+    async def _emit(self, stage: str, progress: int, detail: Optional[dict] = None):
+        """发送进度事件到 EventBus（如果可用）"""
+        if self.event_bus and self.task_id:
+            event = {"agent": "pipeline", "stage": stage, "progress": progress}
+            if detail:
+                event["detail"] = detail
+            await self.event_bus.publish(self.task_id, event)
 
     @abstractmethod
     async def execute(self, file_content: bytes, filename: str) -> PipelineResult:

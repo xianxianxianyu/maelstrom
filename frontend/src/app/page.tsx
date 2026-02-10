@@ -6,7 +6,11 @@ import { UploadButton } from "@/components/UploadButton"
 import { MarkdownViewer } from "@/components/MarkdownViewer"
 import { LoadingState } from "@/components/LoadingState"
 import { QAPanel } from "@/components/QAPanel"
-import { uploadPDF, cancelAllTasks, getTranslation } from "@/lib/api"
+import { TranslationProgress } from "@/components/TranslationProgress"
+import {
+  uploadPDF, cancelAllTasks, cancelTask, getTranslation,
+  getTranslationResult,
+} from "@/lib/api"
 import { ModelConfig, TranslationEntry } from "@/types"
 import { useLLMConfig } from "@/contexts/LLMConfigContext"
 
@@ -36,6 +40,9 @@ export default function Home() {
   // 翻译历史
   const [translationId, setTranslationId] = useState<string | null>(null)
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
+
+  // 异步翻译任务
+  const [taskId, setTaskId] = useState<string | null>(null)
 
   // 可拖拽分隔条
   const [qaWidth, setQaWidth] = useState(320)
@@ -82,7 +89,8 @@ export default function Home() {
   const handleUpload = async (file: File) => {
     const prof = profileMap[selectedProfile]
     if (!prof) { setError("请先在侧边栏配置并选择 LLM 档案"); return }
-    setLoading(true); setError("")
+    setLoading(true); setError(""); setMarkdown(""); setOcrMarkdown("")
+    setTaskId(null); setTranslationId(null)
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -92,32 +100,69 @@ export default function Home() {
         provider: prof.provider as ModelConfig["provider"],
         model: prof.model,
       }
-      const result = await uploadPDF(file, config, systemPrompt, enableOcr, controller.signal)
-      setMarkdown(result.markdown)
-      setTranslationId(result.translation_id || null)
-      if (result.ocr_markdown) {
-        setOcrMarkdown(result.ocr_markdown)
+      const uploadResult = await uploadPDF(file, config, systemPrompt, enableOcr, controller.signal)
+
+      // 新的异步模式：后端返回 {task_id, status: "processing"}
+      const tid = (uploadResult as any).task_id
+      if (tid && (uploadResult as any).status === "processing") {
+        // 设置 taskId，TranslationProgress 组件会自动连接 SSE
+        setTaskId(tid)
       } else {
-        setOcrMarkdown("")
+        // 兼容旧的同步模式（如果后端返回了 markdown）
+        const result = uploadResult as any
+        setMarkdown(result.markdown || "")
+        setOcrMarkdown(result.ocr_markdown || "")
+        setTranslationId(result.translation_id || null)
+        setViewTab("llm")
+        setHistoryRefreshKey(k => k + 1)
+        setLoading(false)
       }
-      setViewTab("llm")
-      setHistoryRefreshKey(k => k + 1)
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         setError("任务已停止")
       } else {
         setError(err instanceof Error ? err.message : "上传失败")
       }
+      setLoading(false)
+      setTaskId(null)
     } finally {
       abortRef.current = null
-      setLoading(false)
     }
   }
 
+  // SSE 完成回调：获取翻译结果
+  const handleTranslationComplete = useCallback(async () => {
+    if (!taskId) return
+    try {
+      const result = await getTranslationResult(taskId)
+      setMarkdown(result.markdown || result.translated_md || "")
+      setOcrMarkdown(result.ocr_markdown || "")
+      setTranslationId(result.translation_id || null)
+      setViewTab("llm")
+      setHistoryRefreshKey(k => k + 1)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "获取翻译结果失败")
+    } finally {
+      setLoading(false)
+      setTaskId(null)
+    }
+  }, [taskId])
+
+  // SSE 错误回调
+  const handleTranslationError = useCallback((errorMsg: string) => {
+    setError(errorMsg)
+    setLoading(false)
+    setTaskId(null)
+  }, [])
+
   const handleCancel = async () => {
     abortRef.current?.abort()
-    try { await cancelAllTasks() } catch { /* ignore */ }
+    try {
+      if (taskId) await cancelTask(taskId)
+      else await cancelAllTasks()
+    } catch { /* ignore */ }
     setLoading(false)
+    setTaskId(null)
   }
 
   const handleSelectHistory = async (entry: TranslationEntry) => {
@@ -182,7 +227,18 @@ export default function Home() {
 
         {/* 文档内容 */}
         <div className="flex-1 overflow-y-auto p-6">
-          {loading && <LoadingState onCancel={handleCancel} />}
+          {loading && (
+            <div className="space-y-4">
+              <LoadingState onCancel={handleCancel} />
+              {taskId && (
+                <TranslationProgress
+                  taskId={taskId}
+                  onComplete={handleTranslationComplete}
+                  onError={handleTranslationError}
+                />
+              )}
+            </div>
+          )}
 
           {error && (
             <div className="p-4 bg-red-50 border border-red-200 text-red-600 rounded-xl text-sm mb-4">

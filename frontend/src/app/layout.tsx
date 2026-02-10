@@ -3,8 +3,8 @@ import { Providers } from "@/components/Providers"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "PDF to Markdown Translator",
-  description: "Academic document translation with preserved structure",
+  title: "Maelstrom",
+  description: "Multi-agent PDF translation system — devour documents, distill knowledge",
 }
 
 export default function RootLayout({

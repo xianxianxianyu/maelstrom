@@ -37,9 +37,25 @@
   -webkit-font-smoothing: antialiased;
 }
 
-/* 段落行距 — 学术论文阅读体验 */
+/* 阅读偏好 CSS 变量驱动 */
+.markdown-viewer .reader-styled {
+  font-family: var(--reader-font-family, inherit);
+  font-size: var(--reader-font-size, 15px);
+  line-height: var(--reader-line-height, 1.8);
+  max-width: var(--reader-max-width, none);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* 标题尺寸跟随基础字号 */
+.markdown-viewer .reader-styled h1 { font-size: calc(var(--reader-font-size, 15px) * 1.6); }
+.markdown-viewer .reader-styled h2 { font-size: calc(var(--reader-font-size, 15px) * 1.35); }
+.markdown-viewer .reader-styled h3 { font-size: calc(var(--reader-font-size, 15px) * 1.15); }
+.markdown-viewer .reader-styled h4 { font-size: var(--reader-font-size, 15px); }
+
+/* 段落行距 — 跟随阅读偏好 */
 .markdown-viewer .prose p {
-  line-height: 1.8;
+  line-height: var(--reader-line-height, 1.8);
   margin-bottom: 1em;
   text-align: justify;
   word-break: break-word;
@@ -167,7 +183,7 @@
 }
 
 .markdown-viewer li {
-  line-height: 1.7;
+  line-height: var(--reader-line-height, 1.8);
 }
 
 /* 分隔线 */

@@ -18,6 +18,64 @@ export interface UploadResponse {
   prompt_profile: PromptProfileInfo | null
 }
 
+export interface AsyncUploadResponse {
+  task_id: string
+  status: "processing"
+}
+
+// ── SSE 事件类型 ──
+
+export interface TranslationSSEEvent {
+  agent: string
+  stage: string
+  progress: number
+  detail?: {
+    message?: string
+    doc_type?: string
+    pipeline?: string
+    current_block?: number
+    total_blocks?: number
+    current?: number
+    total?: number
+    domain?: string
+    term_count?: number
+    score?: number | string
+    new_score?: number | string
+    [key: string]: unknown
+  }
+}
+
+// ── 术语类型 ──
+
+export interface TermEntry {
+  english: string
+  chinese: string
+  keep_english: boolean
+  domain: string
+  source: string
+  updated_at: string
+}
+
+// ── 质量报告类型 ──
+
+export interface QualityReport {
+  score: number
+  terminology_issues: Array<{
+    english_term: string
+    translations: string[]
+    locations: string[]
+    suggested: string
+  }>
+  format_issues: Array<{
+    issue_type: string
+    location: string
+    description: string
+  }>
+  untranslated: string[]
+  suggestions: string[]
+  timestamp: string
+}
+
 export interface KeyStatus {
   provider: string
   has_key: boolean
@@ -195,12 +253,18 @@ export function getTranslationImageUrl(tid: string, filename: string): string {
 export interface QAResponse {
   answer: string
   profile_used: string
+  citations?: Array<{
+    text: string
+    source: string
+  }>
 }
 
 export async function askQuestion(
   question: string,
   profileName?: string,
   context?: string,
+  sessionId?: string,
+  docId?: string,
 ): Promise<QAResponse> {
   const response = await fetch(`${API_BASE}/api/agent/qa`, {
     method: "POST",
@@ -209,11 +273,109 @@ export async function askQuestion(
       question,
       profile_name: profileName || undefined,
       context: context || undefined,
+      session_id: sessionId || undefined,
+      doc_id: docId || undefined,
     }),
   })
   if (!response.ok) {
     const error = await response.text()
     throw new Error(`QA failed: ${error}`)
+  }
+  return response.json()
+}
+
+
+// ── SSE 连接 ──
+
+export function connectTranslationSSE(
+  taskId: string,
+  onEvent: (event: TranslationSSEEvent) => void,
+  onError?: (error: Event) => void,
+): EventSource {
+  const url = `${API_BASE}/api/sse/translation/${taskId}`
+  const es = new EventSource(url)
+  es.onmessage = (e) => {
+    try {
+      const data: TranslationSSEEvent = JSON.parse(e.data)
+      onEvent(data)
+    } catch { /* ignore parse errors */ }
+  }
+  if (onError) {
+    es.onerror = onError
+  }
+  return es
+}
+
+// ── 术语 CRUD API ──
+
+export async function getTerminology(domain: string): Promise<TermEntry[]> {
+  const response = await fetch(`${API_BASE}/api/terminology/${encodeURIComponent(domain)}`)
+  if (!response.ok) {
+    throw new Error(`Failed to get terminology: ${response.statusText}`)
+  }
+  const data = await response.json()
+  return data.entries ?? data
+}
+
+export async function searchTerminology(query: string): Promise<TermEntry[]> {
+  const response = await fetch(`${API_BASE}/api/terminology/search?q=${encodeURIComponent(query)}`)
+  if (!response.ok) {
+    throw new Error(`Failed to search terminology: ${response.statusText}`)
+  }
+  const data = await response.json()
+  return data.results ?? data
+}
+
+export async function updateTerm(
+  domain: string,
+  term: string,
+  chinese: string,
+  keepEnglish?: boolean,
+): Promise<TermEntry> {
+  const response = await fetch(
+    `${API_BASE}/api/terminology/${encodeURIComponent(domain)}/${encodeURIComponent(term)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chinese,
+        keep_english: keepEnglish ?? false,
+      }),
+    },
+  )
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`Failed to update term: ${error}`)
+  }
+  return response.json()
+}
+
+export async function deleteTerm(domain: string, term: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/api/terminology/${encodeURIComponent(domain)}/${encodeURIComponent(term)}`,
+    { method: "DELETE" },
+  )
+  if (!response.ok) {
+    throw new Error(`Failed to delete term: ${response.statusText}`)
+  }
+}
+
+// ── 质量报告 API ──
+
+export async function getQualityReport(translationId: string): Promise<QualityReport> {
+  const response = await fetch(`${API_BASE}/api/translations/${encodeURIComponent(translationId)}/quality`)
+  if (!response.ok) {
+    throw new Error(`Failed to get quality report: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+// ── 翻译结果（异步上传后获取） ──
+
+export async function getTranslationResult(taskId: string): Promise<any> {
+  const response = await fetch(`${API_BASE}/api/pdf/result/${encodeURIComponent(taskId)}`)
+  if (!response.ok) {
+    throw new Error(`Failed to get translation result: ${response.statusText}`)
   }
   return response.json()
 }

@@ -1,6 +1,6 @@
 import { ModelConfig } from "@/types"
 
-const CONFIG_KEY = "pdf-translator-config"
+const CONFIG_KEY = "maelstrom-config"
 
 /**
  * 保存模型配置到 localStorage（不含 API Key）

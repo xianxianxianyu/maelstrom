@@ -1,23 +1,29 @@
-# PDF to Markdown Translator
+# Maelstrom
 
-一个全栈 PDF 翻译系统，将英文 PDF 文档翻译为中英双语 Markdown，自动提取图片、表格和公式，保持原始文档结构。
+> *A vortex that devours documents and distills structured knowledge.*
+
+Maelstrom 是一个多 Agent 协作的全栈 PDF 翻译系统。五个专职 Agent——Orchestrator（编排）、Terminology（术语）、Translation（翻译）、Review（审校）、QA（问答）——在共享上下文中协同工作，将英文 PDF 文档翻译为结构完整保留的中英双语 Markdown，自动提取图片、表格和公式。
+
+## 为什么叫 Maelstrom
+
+Maelstrom（大漩涡）源自北欧传说中的巨型海洋漩涡。在这里，它象征着系统吞噬海量 PDF 文档后，通过多 Agent 流水线层层提炼——术语锚定、智能翻译、质量审校、自动修正——最终输出结构化的双语知识文档。文档进入漩涡，知识从漩涡中涌出。
 
 ## 功能特点
 
-- **双管线处理**：纯 LLM 管线（PyMuPDF 解析）和 OCR + 翻译管线（PaddleOCR / MineRU），可按需切换
+- **多 Agent 编排**：OrchestratorAgent 统一调度术语提取、翻译、审校、自动修正五阶段流程
+- **双管线处理**：纯 LLM 管线（PyMuPDF 解析）和 OCR + 翻译管线（PaddleOCR / MineRU），TranslationAgent 根据文档特征自动选择
 - **智能 Prompt 生成**：自动分析论文摘要，识别领域和术语，生成定制化翻译指令
+- **质量闭环**：ReviewAgent 三维度审校（术语一致性 + 格式完整性 + 未翻译检测），评分低于 70 分自动修正重审
 - **多 LLM 服务商**：ZhipuAI (GLM)、OpenAI、DeepSeek，通过 Profile + Binding 灵活配置
 - **多 OCR 服务商**：PaddleOCR、MineRU，支持同步/异步模式
+- **实时进度推送**：EventBus + SSE 全流程事件流，前端实时展示每个 Agent 阶段进度
+- **阅读偏好定制**：字体（16 种含衬线/无衬线/等宽）、字号、行高、内容宽度实时调节
 - **翻译历史管理**：自动保存翻译结果到 `Translation/` 目录，支持查看、删除
-- **异步任务管理**：支持任务取消、进度跟踪、并发控制（Semaphore=5）
-- **Agent 系统**：可扩展的 Agent 框架，内置 QA Agent
 - **安全的 API Key 管理**：密钥仅存储在服务器内存中，重启即清除
-- **文档结构保持**：自动检测页眉页脚、推断标题层级、图文交织排版
-- **后处理清洗**：自动去除代码围栏、HTML 转 Markdown、规范化空白
 
 ## 技术栈
 
-- **前端**：Next.js 14 + TypeScript + React 18 + Tailwind CSS + React Markdown
+- **前端**：Next.js 14 + TypeScript + React 18 + Tailwind CSS + React Markdown + KaTeX
 - **后端**：Python + FastAPI + Pydantic + uvicorn
 - **PDF 解析**：PyMuPDF (fitz) + pdfplumber
 - **OCR**：PaddleOCR / MineRU（可选）
@@ -31,12 +37,16 @@
 │   │   ├── app/             # 页面（主页 + 布局）
 │   │   ├── components/      # React 组件
 │   │   │   ├── UploadButton     # PDF 上传
-│   │   │   ├── MarkdownViewer   # Markdown 渲染
+│   │   │   ├── MarkdownViewer   # Markdown 渲染（CSS 变量驱动阅读偏好）
 │   │   │   ├── Sidebar          # 侧边栏（设置 + 历史）
 │   │   │   ├── LLMConfigPanel   # LLM 配置面板
 │   │   │   ├── OCRConfigPanel   # OCR 配置面板
+│   │   │   ├── TranslationProgress  # SSE 实时进度
 │   │   │   ├── QAPanel          # 问答面板
 │   │   │   └── HistoryList      # 翻译历史列表
+│   │   ├── contexts/        # React Context
+│   │   │   ├── LLMConfigContext     # LLM 配置状态
+│   │   │   └── ReaderSettingsContext # 阅读偏好状态
 │   │   ├── lib/             # API 客户端 + 浏览器存储
 │   │   └── types/           # TypeScript 类型定义
 │   └── package.json
@@ -45,6 +55,7 @@
 │   ├── app/
 │   │   ├── api/routes/      # API 路由
 │   │   │   ├── pdf.py           # PDF 上传（瘦路由，委托给 Orchestrator）
+│   │   │   ├── sse.py           # SSE 进度推送
 │   │   │   ├── agent.py         # Agent QA 问答
 │   │   │   ├── llm_config.py    # LLM 配置 CRUD
 │   │   │   ├── ocr_config.py    # OCR 配置 CRUD
@@ -86,17 +97,26 @@
 │   └── providers/           # LLM Provider 实现
 │       ├── base.py              # BaseProvider 抽象接口
 │       ├── openai_compat.py     # OpenAI 兼容 API 基类
-│       ├── glm.py               # ZhipuAI GLM（同步 SDK + asyncio.to_thread）
+│       ├── glm.py               # ZhipuAI GLM
 │       ├── openai.py            # OpenAI
 │       └── deepseek.py          # DeepSeek
 │
 ├── agent/                    # Agent 框架
 │   ├── base.py              # BaseAgent 抽象基类
 │   ├── registry.py          # Agent 注册表
+│   ├── context.py           # AgentContext 共享上下文
+│   ├── event_bus.py         # SSE 事件总线
+│   ├── models.py            # QualityReport 等数据模型
 │   ├── agents/
-│   │   └── qa_agent.py      # QA 问答 Agent
-│   ├── tools/               # Agent 工具（扩展用）
-│   └── workflows/           # Agent 工作流（扩展用）
+│   │   ├── orchestrator_agent.py  # 编排 Agent（5 阶段流程）
+│   │   ├── terminology_agent.py   # 术语提取 Agent
+│   │   ├── translation_agent.py   # 翻译 Agent（管线选择 + 执行）
+│   │   ├── review_agent.py        # 审校 Agent（质量评分）
+│   │   └── qa_agent.py            # QA 问答 Agent
+│   ├── tools/               # Agent 工具
+│   │   └── doc_search_tool.py     # 文档搜索工具
+│   └── workflows/
+│       └── translation_workflow.py  # 翻译工作流入口
 │
 ├── key/                      # YAML 配置文件目录
 ├── Translation/              # 翻译结果存储目录（自动生成）
@@ -111,8 +131,8 @@
 cd backend
 
 # 创建 conda 环境
-conda create -n pdf-translator python=3.11 -y
-conda activate pdf-translator
+conda create -n maelstrom python=3.11 -y
+conda activate maelstrom
 
 # 安装依赖
 pip install -r requirements.txt
@@ -144,25 +164,76 @@ npm run dev
 6. 查看翻译结果，支持切换 LLM 翻译 / OCR 原文视图
 7. 翻译历史自动保存，可在侧边栏查看和管理
 
-## 处理管线
+## Agent 翻译系统架构
 
-### 纯 LLM 管线（默认）
+Maelstrom 的核心是多 Agent 协作架构，由 OrchestratorAgent 统一编排，各 Agent 通过共享的 `AgentContext` 传递数据。
 
-```
-PDF → PyMuPDF 解析（文本+图片+表格+字体信息）
-    → 提取摘要 → LLM 分析领域和术语 → 生成定制化翻译 Prompt
-    → 合并小文本块 → 并发翻译（Semaphore=5）
-    → 后处理清洗 → 组装 Markdown（图文交织）
-```
-
-### OCR + 翻译管线
+### 整体流程
 
 ```
-PDF → OCR 识别（PaddleOCR/MineRU）→ 完整 Markdown
-    → 提取摘要 → LLM 分析领域和术语 → 生成定制化翻译 Prompt
-    → 分段（文本/图片/表格/公式）→ 仅翻译文本段
-    → 后处理清洗 → 重组 Markdown
+PDF 上传 → OrchestratorAgent 编排
+  ├── Phase 1: TerminologyAgent 术语提取（前 3000 字符 → LLM 分析）
+  ├── Phase 2: TranslationAgent 翻译
+  │     ├── 文档特征分析（公式密度、表格数、语言分布）
+  │     ├── 管线选择（LLM 直接翻译 / OCR + 翻译）
+  │     ├── Prompt 生成（领域识别 + 术语注入）
+  │     └── 执行翻译（带重试，最多 3 次）
+  ├── Phase 3: ReviewAgent 质量审校（术语一致性 + 格式完整性 + 未翻译检测）
+  ├── Phase 4: 质量 < 70 分 → 自动修正重审（最多 1 次，复用 OCR 结果）
+  └── Phase 5: 保存结果到 TranslationStore
 ```
+
+### AgentContext 共享上下文
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `task_id` | `str` | 翻译任务唯一标识 |
+| `filename` | `str` | PDF 文件名 |
+| `file_content` | `bytes` | PDF 原始字节 |
+| `event_bus` | `EventBus` | SSE 事件总线，推送实时进度 |
+| `enable_ocr` | `bool` | 是否启用 OCR 管线 |
+| `glossary` | `dict[str, str]` | 术语表 {英文: 中文} |
+| `prompt_profile` | `PromptProfile` | LLM 生成的翻译配置（领域、术语、prompt） |
+| `translated_md` | `str` | 翻译后的 Markdown |
+| `images` | `dict[str, bytes]` | PDF 提取的图片 |
+| `ocr_md` | `str` | OCR 识别的原始 Markdown |
+| `ocr_images` | `dict[str, bytes]` | OCR 提取的图片 |
+| `quality_report` | `QualityReport` | 审校质量报告（评分 + 问题列表） |
+| `cancellation_token` | `CancellationToken` | 取消令牌 |
+
+### 翻译管线
+
+TranslationAgent 根据文档特征自动选择管线：
+
+- **LLM 管线**（默认）：PyMuPDF 解析 → 文本块合并 → 并发翻译（Semaphore=5）→ 后处理 → Markdown 组装
+- **OCR 管线**：PaddleOCR/MineRU 识别 → 逐段翻译 → 后处理清洗
+
+auto_fix 场景下，TranslationAgent 检测到 `ctx` 已有 `prompt_profile` 和 `translated_md`，跳过文档分析和 Prompt 生成，直接复用已有配置重新翻译，OCR 结果也会复用。
+
+### ReviewAgent 审校
+
+ReviewAgent 对翻译结果进行三维度检查：
+
+1. **术语一致性**：对照 glossary 检查术语翻译是否统一
+2. **格式完整性**：检测断裂表格、未闭合公式、损坏标题、缺失图片引用
+3. **未翻译检测**：识别残留的英文段落
+
+综合评分 0–100，低于 70 分触发自动修正。
+
+### 事件推送
+
+全流程通过 EventBus + SSE 实时推送进度事件到前端，事件格式：
+
+```json
+{
+  "agent": "orchestrator | translation | review | pipeline",
+  "stage": "terminology | analysis | translating | review | complete | ...",
+  "progress": 0-100,
+  "detail": { "message": "人类可读的进度描述" }
+}
+```
+
+前端 `TranslationProgress` 组件订阅 SSE 流，展示阶段进度条和事件日志。
 
 ## 配置系统
 
@@ -186,29 +257,6 @@ PDF → OCR 识别（PaddleOCR/MineRU）→ 完整 Markdown
 |------------|------|------|
 | PaddleOCR | sync / async | 开源 OCR |
 | MineRU | vlm / doclayout_yolo | 视觉语言模型 / 传统布局检测 |
-
-## API 端点
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/pdf/upload` | POST | 上传并翻译 PDF |
-| `/api/pdf/cancel/{task_id}` | POST | 取消指定任务 |
-| `/api/pdf/cancel-all` | POST | 取消所有任务 |
-| `/api/pdf/tasks` | GET | 列出运行中的任务 |
-| `/api/models/` | GET | 获取可用模型列表 |
-| `/api/keys/set` | POST | 设置 API Key（仅内存） |
-| `/api/keys/status` | GET | 查看各服务商 Key 状态 |
-| `/api/keys/{provider}` | DELETE | 删除 API Key |
-| `/api/llm-config` | GET/POST | 读取/保存 LLM 配置 |
-| `/api/llm-config/reload` | POST | 从 YAML 重新加载 LLM 配置 |
-| `/api/ocr-config` | GET/POST | 读取/保存 OCR 配置 |
-| `/api/ocr-config/reload` | POST | 从 YAML 重新加载 OCR 配置 |
-| `/api/translations` | GET | 翻译历史列表 |
-| `/api/translations/{id}` | GET/DELETE | 获取/删除翻译记录 |
-| `/api/translations/{id}/images/{filename}` | GET | 获取翻译中的图片 |
-| `/api/agent/qa` | POST | QA 问答 |
-| `/api/agent/list` | GET | 列出可用 Agent |
-| `/health` | GET | 健康检查 |
 
 ## 安全性
 
