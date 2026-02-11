@@ -101,6 +101,20 @@ def _make_mock_store():
     return store
 
 
+def _make_mock_index_agent():
+    """Create a mock IndexAgent that sets paper_metadata on ctx."""
+    agent = AsyncMock()
+    agent.name = "index"
+
+    async def index_side_effect(ctx, **kwargs):
+        ctx.paper_metadata = {"title": "Test", "domain": "nlp"}
+        return ctx
+
+    agent.side_effect = index_side_effect
+    return agent
+    return store
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -137,6 +151,7 @@ def agent():
         ocr_agent=_make_mock_ocr_agent(),
         translation_agent=_make_mock_translation_agent("翻译后的文本"),
         review_agent=_make_mock_review_agent(score=85),
+        index_agent=_make_mock_index_agent(),
         translation_store=_make_mock_store(),
     )
 
@@ -205,6 +220,7 @@ class TestWorkflowOrder:
             ocr_agent=ocr_agent,
             translation_agent=trans_agent,
             review_agent=review_agent,
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -342,6 +358,7 @@ class TestAutoFix:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=AsyncMock(side_effect=trans_side_effect),
             review_agent=AsyncMock(side_effect=review_side_effect),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -362,6 +379,7 @@ class TestAutoFix:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(score=70),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -402,6 +420,7 @@ class TestAutoFix:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=AsyncMock(side_effect=trans_side_effect),
             review_agent=AsyncMock(side_effect=review_side_effect),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -424,6 +443,7 @@ class TestAutoFix:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(score=50),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -471,6 +491,7 @@ class TestCancellation:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -491,6 +512,7 @@ class TestCancellation:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=AsyncMock(side_effect=trans_side_effect),
             review_agent=_make_mock_review_agent(),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -519,6 +541,7 @@ class TestAgentFailureHandling:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -539,6 +562,7 @@ class TestAgentFailureHandling:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=AsyncMock(side_effect=trans_side_effect),
             review_agent=_make_mock_review_agent(),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -556,6 +580,7 @@ class TestAgentFailureHandling:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=AsyncMock(side_effect=review_side_effect),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -579,6 +604,7 @@ class TestAgentFailureHandling:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=AsyncMock(side_effect=trans_side_effect),
             review_agent=_make_mock_review_agent(score=50),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -598,6 +624,7 @@ class TestAgentFailureHandling:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(),
+            index_agent=_make_mock_index_agent(),
             translation_store=mock_store,
         )
 
@@ -646,6 +673,7 @@ class TestSaveResults:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=AsyncMock(side_effect=review_side_effect),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 
@@ -676,6 +704,7 @@ class TestContextDataFlow:
             ocr_agent=_make_mock_ocr_agent(),
             translation_agent=_make_mock_translation_agent(),
             review_agent=_make_mock_review_agent(),
+            index_agent=_make_mock_index_agent(),
             translation_store=_make_mock_store(),
         )
 

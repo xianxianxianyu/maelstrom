@@ -45,13 +45,14 @@ class TestAgentContextFields:
             "ocr_md",
             "ocr_images",
             "quality_report",
+            "paper_metadata",
             "cancellation_token",
         ]
         assert field_names == expected
 
     def test_required_fields_count(self):
-        """AgentContext should have 15 fields total."""
-        assert len(fields(AgentContext)) == 15
+        """AgentContext should have 16 fields total."""
+        assert len(fields(AgentContext)) == 16
 
 
 # ---------------------------------------------------------------------------

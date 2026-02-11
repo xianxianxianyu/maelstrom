@@ -21,8 +21,9 @@ const AGENT_PHASES: AgentPhase[] = [
   { id: "terminology", label: "术语准备", icon: "📚", progressRange: [0, 15] },
   { id: "ocr", label: "文档解析", icon: "📄", progressRange: [16, 25] },
   { id: "translation", label: "翻译", icon: "🌐", progressRange: [26, 70] },
-  { id: "review", label: "质量审校", icon: "✅", progressRange: [71, 85] },
-  { id: "saving", label: "保存", icon: "💾", progressRange: [86, 100] },
+  { id: "review", label: "质量审校", icon: "✅", progressRange: [71, 90] },
+  { id: "index", label: "索引", icon: "🗂️", progressRange: [91, 96] },
+  { id: "saving", label: "保存", icon: "💾", progressRange: [97, 100] },
 ]
 
 const AGENT_LABELS: Record<string, string> = {
@@ -31,6 +32,7 @@ const AGENT_LABELS: Record<string, string> = {
   ocr: "解析",
   translation: "翻译",
   review: "审校",
+  index: "索引",
   terminology: "术语",
   pipeline: "管线",
 }
@@ -51,6 +53,9 @@ const STAGE_LABELS: Record<string, string> = {
   terminology_check: "检查术语一致性",
   format_check: "检查格式完整性",
   untranslated_check: "检测未翻译段落",
+  extracting: "提取元数据",
+  saving_db: "写入数据库",
+  indexing: "论文索引",
   auto_fix: "自动修正",
   saving: "保存结果",
   complete: "已完成",
@@ -92,12 +97,15 @@ export function TranslationProgress({ taskId, onComplete, onError }: Props) {
       ocr: 1,
       translation: 2,
       review: 3,
+      index: 4,
     }
     if (agent in phaseMap) {
       setCurrentPhaseIndex(phaseMap[agent])
     } else if (agent === "orchestrator") {
       // orchestrator 的 saving 阶段
-      if (progress >= 86) {
+      if (progress >= 97) {
+        setCurrentPhaseIndex(5)
+      } else if (progress >= 91) {
         setCurrentPhaseIndex(4)
       }
     }

@@ -23,6 +23,7 @@ import agent.agents.terminology_agent   # noqa: F401
 import agent.agents.ocr_agent           # noqa: F401
 import agent.agents.translation_agent   # noqa: F401
 import agent.agents.review_agent        # noqa: F401
+import agent.agents.index_agent         # noqa: F401
 import agent.agents.qa_agent            # noqa: F401
 
 logger = logging.getLogger(__name__)

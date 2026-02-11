@@ -40,6 +40,7 @@ class AgentContext:
         prompt_profile: LLM 生成的翻译配置（含术语、领域、prompt）
         translated_md: 翻译后的 Markdown 文本
         quality_report: 审校 Agent 生成的质量报告
+        paper_metadata: IndexAgent 提取的论文结构化元数据
         cancellation_token: 取消令牌，用于响应用户取消操作
     """
 
@@ -57,4 +58,5 @@ class AgentContext:
     ocr_md: str | None = None
     ocr_images: dict[str, bytes] = field(default_factory=dict)
     quality_report: QualityReport | None = None
+    paper_metadata: dict = field(default_factory=dict)
     cancellation_token: CancellationToken = field(default_factory=CancellationToken)

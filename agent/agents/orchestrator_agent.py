@@ -51,6 +51,7 @@ class OrchestratorAgent(BaseAgent):
         ocr_agent: BaseAgent | None = None,
         translation_agent: BaseAgent | None = None,
         review_agent: BaseAgent | None = None,
+        index_agent: BaseAgent | None = None,
         translation_store: Any | None = None,
     ) -> None:
         """初始化 OrchestratorAgent
@@ -60,12 +61,14 @@ class OrchestratorAgent(BaseAgent):
             ocr_agent: 可选的 OCRAgent 实例（依赖注入，用于测试）
             translation_agent: 可选的 TranslationAgent 实例（依赖注入，用于测试）
             review_agent: 可选的 ReviewAgent 实例（依赖注入，用于测试）
+            index_agent: 可选的 IndexAgent 实例（依赖注入，用于测试）
             translation_store: 可选的 TranslationStore 实例（依赖注入，用于测试）
         """
         self._terminology_agent = terminology_agent
         self._ocr_agent = ocr_agent
         self._translation_agent = translation_agent
         self._review_agent = review_agent
+        self._index_agent = index_agent
         self._translation_store = translation_store
 
     @property
@@ -124,6 +127,18 @@ class OrchestratorAgent(BaseAgent):
             return self._review_agent
         return agent_registry.create("ReviewAgent")
 
+    def _get_index_agent(self) -> BaseAgent:
+        """获取 IndexAgent 实例
+
+        如果未通过依赖注入提供，则从 agent_registry 创建。
+
+        Returns:
+            IndexAgent 实例
+        """
+        if self._index_agent is not None:
+            return self._index_agent
+        return agent_registry.create("IndexAgent")
+
     async def _get_translation_store(self) -> Any:
         """获取 TranslationStore 实例
 
@@ -174,7 +189,10 @@ class OrchestratorAgent(BaseAgent):
         ):
             await self._auto_fix_and_review(ctx)
 
-        # Phase 6: 保存结果
+        # Phase 6: 论文索引（提取元数据 → 存入数据库）
+        await self._run_index_phase(ctx)
+
+        # Phase 7: 保存结果
         await self._save_results(ctx)
 
         # 完成
@@ -462,8 +480,51 @@ class OrchestratorAgent(BaseAgent):
 
         logger.info("Auto-fix complete: new score=%s", new_score)
 
+    async def _run_index_phase(self, ctx: AgentContext) -> None:
+        """Phase 6: 论文索引
+
+        调用 IndexAgent 提取论文元数据并存入 SQLite 数据库。
+        索引失败不阻塞工作流（non-fatal）。
+
+        Args:
+            ctx: AgentContext
+        """
+        ctx.cancellation_token.check()
+
+        await ctx.event_bus.publish(ctx.task_id, {
+            "agent": "orchestrator",
+            "stage": "indexing",
+            "progress": 91,
+            "detail": {"message": "论文索引中..."},
+        })
+
+        index_agent = self._get_index_agent()
+
+        try:
+            ctx = await index_agent(ctx)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("Index phase failed: %s, continuing without indexing", e)
+            await ctx.event_bus.publish(ctx.task_id, {
+                "agent": "orchestrator",
+                "stage": "indexing",
+                "progress": 96,
+                "detail": {"status": "failed", "error": str(e), "message": f"索引失败: {e}（不影响翻译结果）"},
+            })
+            return
+
+        await ctx.event_bus.publish(ctx.task_id, {
+            "agent": "orchestrator",
+            "stage": "indexing",
+            "progress": 96,
+            "detail": {"message": "论文索引完成"},
+        })
+
+        logger.info("Index phase complete: paper_metadata=%s", bool(ctx.paper_metadata))
+
     async def _save_results(self, ctx: AgentContext) -> None:
-        """Phase 6: 保存翻译结果
+        """Phase 7: 保存翻译结果
 
         将翻译结果和 QualityReport 保存到 TranslationStore。
 
@@ -475,7 +536,7 @@ class OrchestratorAgent(BaseAgent):
         await ctx.event_bus.publish(ctx.task_id, {
             "agent": "orchestrator",
             "stage": "saving",
-            "progress": 96,
+            "progress": 97,
             "detail": {"message": "保存翻译结果..."},
         })
 
