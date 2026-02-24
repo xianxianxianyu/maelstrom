@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS papers (
     methodology TEXT NOT NULL DEFAULT '',
     contributions TEXT NOT NULL DEFAULT '[]',
     keywords TEXT NOT NULL DEFAULT '[]',
+    tags TEXT NOT NULL DEFAULT '[]',
     base_models TEXT NOT NULL DEFAULT '[]',
     year INTEGER,
     venue TEXT NOT NULL DEFAULT '',
@@ -101,6 +102,7 @@ class PaperMetadata:
     methodology: str = ""
     contributions: list[str] = dc_field(default_factory=list)
     keywords: list[str] = dc_field(default_factory=list)
+    tags: list[str] = dc_field(default_factory=list)
     base_models: list[str] = dc_field(default_factory=list)
     year: int | None = None
     venue: str = ""
@@ -116,6 +118,7 @@ class PaperMetadata:
             "methodology": self.methodology,
             "contributions": self.contributions,
             "keywords": self.keywords,
+            "tags": self.tags,
             "base_models": self.base_models,
             "year": self.year,
             "venue": self.venue,
@@ -133,6 +136,7 @@ class PaperMetadata:
             methodology=data.get("methodology", ""),
             contributions=data.get("contributions", []),
             keywords=data.get("keywords", []),
+            tags=data.get("tags", []),
             base_models=data.get("base_models", []),
             year=data.get("year"),
             venue=data.get("venue", ""),
@@ -170,6 +174,28 @@ class PaperRepository:
         await repo.close()
     """
 
+    _JSON_FIELDS = ("authors", "contributions", "keywords", "tags", "base_models")
+    _EDITABLE_FIELDS = {
+        "title",
+        "title_zh",
+        "authors",
+        "abstract",
+        "domain",
+        "research_problem",
+        "methodology",
+        "contributions",
+        "keywords",
+        "tags",
+        "base_models",
+        "year",
+        "venue",
+        "quality_score",
+        "filename",
+    }
+    _MIGRATION_COLUMNS = {
+        "tags": "TEXT NOT NULL DEFAULT '[]'",
+    }
+
     def __init__(self, db_path: str | Path | None = None) -> None:
         self._db_path = Path(db_path) if db_path else _DEFAULT_DB_PATH
         self._db: aiosqlite.Connection | None = None
@@ -183,8 +209,20 @@ class PaperRepository:
         await self._db.executescript(_SCHEMA_SQL)
         await self._db.executescript(_FTS_SCHEMA_SQL)
         await self._db.executescript(_FTS_TRIGGERS_SQL)
+        await self._ensure_columns()
         await self._db.commit()
         logger.info("PaperRepository initialized: %s", self._db_path)
+
+    async def _ensure_columns(self) -> None:
+        db = self._ensure_db()
+        cursor = await db.execute("PRAGMA table_info(papers)")
+        rows = await cursor.fetchall()
+        existing = {row[1] for row in rows}
+
+        for column, sql_def in self._MIGRATION_COLUMNS.items():
+            if column in existing:
+                continue
+            await db.execute(f"ALTER TABLE papers ADD COLUMN {column} {sql_def}")
 
     async def close(self) -> None:
         """关闭数据库连接"""
@@ -217,10 +255,10 @@ class PaperRepository:
             """\
             INSERT INTO papers (
                 id, title, title_zh, authors, abstract, domain,
-                research_problem, methodology, contributions, keywords,
+                research_problem, methodology, contributions, keywords, tags,
                 base_models, year, venue, embedding, quality_score,
                 filename, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title,
                 title_zh=excluded.title_zh,
@@ -231,11 +269,13 @@ class PaperRepository:
                 methodology=excluded.methodology,
                 contributions=excluded.contributions,
                 keywords=excluded.keywords,
+                tags=excluded.tags,
                 base_models=excluded.base_models,
                 year=excluded.year,
                 venue=excluded.venue,
                 embedding=excluded.embedding,
                 quality_score=excluded.quality_score,
+                filename=excluded.filename,
                 created_at=excluded.created_at
             """,
             (
@@ -249,6 +289,7 @@ class PaperRepository:
                 metadata.methodology,
                 json.dumps(metadata.contributions, ensure_ascii=False),
                 json.dumps(metadata.keywords, ensure_ascii=False),
+                json.dumps(metadata.tags, ensure_ascii=False),
                 json.dumps(metadata.base_models, ensure_ascii=False),
                 metadata.year,
                 metadata.venue,
@@ -269,6 +310,102 @@ class PaperRepository:
         cursor = await db.execute("SELECT * FROM papers WHERE id = ?", (paper_id,))
         row = await cursor.fetchone()
         return self._row_to_dict(row) if row else None
+
+    async def get_many_by_ids(self, paper_ids: list[str]) -> dict[str, dict]:
+        if not paper_ids:
+            return {}
+
+        db = self._ensure_db()
+        placeholders = ",".join(["?"] * len(paper_ids))
+        cursor = await db.execute(
+            f"SELECT * FROM papers WHERE id IN ({placeholders})",
+            tuple(paper_ids),
+        )
+        rows = await cursor.fetchall()
+        result: dict[str, dict] = {}
+        for row in rows:
+            data = self._row_to_dict(row)
+            result[data["id"]] = data
+        return result
+
+    async def list_for_history(
+        self,
+        query: str = "",
+        tag: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        db = self._ensure_db()
+
+        clauses: list[str] = []
+        params: list[object] = []
+
+        if query:
+            like = f"%{query}%"
+            clauses.append(
+                "(title LIKE ? OR title_zh LIKE ? OR abstract LIKE ? OR domain LIKE ? OR filename LIKE ?)"
+            )
+            params.extend([like, like, like, like, like])
+
+        if tag:
+            like_tag = f"%{tag}%"
+            clauses.append("(tags LIKE ? OR keywords LIKE ? OR domain LIKE ?)")
+            params.extend([like_tag, like_tag, like_tag])
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = (
+            f"SELECT * FROM papers {where} "
+            "ORDER BY created_at DESC "
+            "LIMIT ? OFFSET ?"
+        )
+        params.extend([max(1, min(limit, 200)), max(0, offset)])
+
+        cursor = await db.execute(sql, tuple(params))
+        rows = await cursor.fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    async def update_partial(self, paper_id: str, updates: dict[str, object]) -> dict | None:
+        db = self._ensure_db()
+
+        sanitized: dict[str, object] = {}
+        for key, value in updates.items():
+            if key not in self._EDITABLE_FIELDS:
+                continue
+            sanitized[key] = self._normalize_update_value(key, value)
+
+        if not sanitized:
+            return await self.get_by_id(paper_id)
+
+        set_clause = ", ".join([f"{k} = ?" for k in sanitized])
+        await db.execute(
+            f"UPDATE papers SET {set_clause}, created_at = ? WHERE id = ?",
+            tuple(list(sanitized.values()) + [datetime.now(timezone.utc).isoformat(), paper_id]),
+        )
+        await db.commit()
+        return await self.get_by_id(paper_id)
+
+    @classmethod
+    def _normalize_update_value(cls, key: str, value: object) -> object:
+        if key in cls._JSON_FIELDS:
+            if isinstance(value, str):
+                value = [v.strip() for v in value.splitlines() if v.strip()]
+            if isinstance(value, tuple):
+                value = list(value)
+            if not isinstance(value, list):
+                value = []
+            return json.dumps([str(v).strip() for v in value if str(v).strip()], ensure_ascii=False)
+
+        if key in {"year", "quality_score"}:
+            if value in (None, ""):
+                return None
+            try:
+                return int(str(value))
+            except (TypeError, ValueError):
+                return None
+
+        if value is None:
+            return ""
+        return str(value)
 
     async def search_text(self, query: str, limit: int = 20) -> list[dict]:
         """FTS5 全文搜索（中英文）"""
@@ -337,7 +474,7 @@ class PaperRepository:
     def _row_to_dict(row: aiosqlite.Row) -> dict:
         """将 Row 转为 dict，JSON 字段自动解析"""
         d = dict(row)
-        for json_field in ("authors", "contributions", "keywords", "base_models"):
+        for json_field in ("authors", "contributions", "keywords", "tags", "base_models"):
             if json_field in d and isinstance(d[json_field], str):
                 try:
                     d[json_field] = json.loads(d[json_field])

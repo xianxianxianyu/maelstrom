@@ -88,6 +88,7 @@ async def run_translation_workflow(
     # 7. 构建结果字典（兼容旧 API 响应格式）
     result: dict[str, Any] = {
         "task_id": ctx.task_id,
+        "translation_id": ctx.translation_id,
         "markdown": ctx.translated_md,
         "translated_md": ctx.translated_md,
         "ocr_markdown": ctx.ocr_md,

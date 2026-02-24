@@ -247,6 +247,76 @@ export function getTranslationImageUrl(tid: string, filename: string): string {
   return `${API_BASE}/api/translations/${tid}/images/${filename}`
 }
 
+export interface PaperRecord {
+  id: string
+  task_id: string
+  title: string
+  title_zh: string
+  authors: string[]
+  abstract: string
+  domain: string
+  research_problem: string
+  methodology: string
+  contributions: string[]
+  keywords: string[]
+  tags: string[]
+  base_models: string[]
+  year: number | null
+  venue: string
+  quality_score: number | null
+  filename: string
+  created_at: string
+}
+
+export interface PaperDetailResponse {
+  paper: PaperRecord
+  sections: Record<string, string>
+}
+
+export async function getPaperDetail(taskId: string): Promise<PaperDetailResponse> {
+  const response = await fetch(`${API_BASE}/api/papers/${encodeURIComponent(taskId)}`)
+  if (!response.ok) {
+    throw new Error(`Failed to get paper detail: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+export async function updatePaperSection(
+  taskId: string,
+  section: string,
+  content: string,
+): Promise<PaperDetailResponse> {
+  const response = await fetch(
+    `${API_BASE}/api/papers/${encodeURIComponent(taskId)}/sections/${encodeURIComponent(section)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    },
+  )
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`Failed to update paper section: ${error}`)
+  }
+  return response.json()
+}
+
+export async function updatePaperRaw(
+  taskId: string,
+  raw: Record<string, unknown> | string,
+): Promise<PaperDetailResponse> {
+  const response = await fetch(`${API_BASE}/api/papers/${encodeURIComponent(taskId)}/raw`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ raw }),
+  })
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`Failed to update paper raw payload: ${error}`)
+  }
+  return response.json()
+}
+
 
 // ── Agent QA API ──
 

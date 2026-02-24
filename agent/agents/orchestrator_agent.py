@@ -543,12 +543,12 @@ class OrchestratorAgent(BaseAgent):
         try:
             store = await self._get_translation_store()
 
-            # Build meta_extra with quality report
             meta_extra: dict[str, Any] = {}
+            meta_extra.update(self._build_history_meta(ctx))
             if ctx.quality_report is not None:
                 meta_extra["quality_report"] = ctx.quality_report.to_dict()
 
-            await store.save(
+            entry = await store.save(
                 filename=ctx.filename,
                 translated_md=ctx.translated_md,
                 images=ctx.images if ctx.images else None,
@@ -556,6 +556,7 @@ class OrchestratorAgent(BaseAgent):
                 ocr_images=ctx.ocr_images if ctx.ocr_images else None,
                 meta_extra=meta_extra,
             )
+            ctx.translation_id = entry.get("id")
 
             logger.info("Results saved for task %s", ctx.task_id)
 
@@ -569,6 +570,41 @@ class OrchestratorAgent(BaseAgent):
             "progress": 99,
             "detail": {"message": "结果已保存"},
         })
+
+    @staticmethod
+    def _build_history_meta(ctx: AgentContext) -> dict[str, Any]:
+        metadata = ctx.paper_metadata if isinstance(ctx.paper_metadata, dict) else {}
+
+        keywords_raw = metadata.get("keywords")
+        keywords = [str(item).strip() for item in keywords_raw] if isinstance(keywords_raw, list) else []
+        keywords = [item for item in keywords if item]
+
+        domain = str(metadata.get("domain") or "").strip()
+        tags: list[str] = []
+        if domain:
+            tags.append(domain)
+        for item in keywords:
+            if item not in tags:
+                tags.append(item)
+            if len(tags) >= 8:
+                break
+
+        title = (
+            str(metadata.get("title_zh") or "").strip()
+            or str(metadata.get("title") or "").strip()
+            or ctx.filename
+        )
+
+        return {
+            "task_id": ctx.task_id,
+            "index_status": "indexed" if metadata else "missing",
+            "paper_title": title,
+            "paper_domain": domain,
+            "paper_year": metadata.get("year"),
+            "paper_keywords": keywords,
+            "paper_tags": tags,
+            "paper_metadata": metadata,
+        }
 
     # ------------------------------------------------------------------
     # Helpers

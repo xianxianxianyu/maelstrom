@@ -59,4 +59,5 @@ class AgentContext:
     ocr_images: dict[str, bytes] = field(default_factory=dict)
     quality_report: QualityReport | None = None
     paper_metadata: dict = field(default_factory=dict)
+    translation_id: str | None = None
     cancellation_token: CancellationToken = field(default_factory=CancellationToken)

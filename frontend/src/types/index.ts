@@ -85,4 +85,11 @@ export interface TranslationEntry {
   provider?: string
   model?: string
   enable_ocr?: boolean
+  task_id?: string
+  index_status?: "indexed" | "missing" | string
+  paper_title?: string
+  paper_domain?: string
+  paper_year?: number | null
+  paper_keywords?: string[]
+  paper_tags?: string[]
 }

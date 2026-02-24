@@ -125,6 +125,40 @@ Maelstrom（大漩涡）源自北欧传说中的巨型海洋漩涡。在这里�
 
 ## 快速开始
 
+### 0. 一行命令启动（推荐）
+
+在项目根目录执行（`README.md` 同级目录）：
+
+```bash
+# 首次准备
+npm install
+npm run install:frontend
+
+# 先激活你的 Python 环境（conda/venv）
+npm run install:backend
+
+# 一行命令同时启动前后端
+npm run dev
+```
+
+- 前端：`http://localhost:3302`
+- 后端：`http://127.0.0.1:3301`
+
+### 0.1 Electron 桌面模式（开发）
+
+在完成上面的依赖安装后，继续在项目根目录执行：
+
+```bash
+npm run desktop:dev
+```
+
+该命令会由 Electron 主进程自动拉起：
+
+- 后端服务（`dev:backend`，`127.0.0.1:3301`）
+- 前端服务（`dev:frontend`，`localhost:3302`）
+
+服务就绪后会自动打开桌面窗口。关闭桌面窗口时会同时清理前后端子进程。
+
 ### 1. 后端
 
 ```bash

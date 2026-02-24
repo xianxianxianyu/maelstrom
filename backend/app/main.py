@@ -49,6 +49,7 @@ from app.api.routes import agent as agent_route
 from app.api.routes import sse as sse_route
 from app.api.routes import terminology as terminology_route
 from app.api.routes import quality as quality_route
+from app.api.routes import papers as papers_route
 from core.llm import get_llm_manager, load_config_data
 from core.ocr import get_ocr_manager, load_ocr_config_data
 from app.core.key_store import key_store
@@ -81,6 +82,7 @@ app.include_router(agent_route.router)
 app.include_router(sse_route.router)
 app.include_router(terminology_route.router)
 app.include_router(quality_route.router)
+app.include_router(papers_route.router)
 
 
 @app.get("/")

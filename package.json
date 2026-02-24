@@ -1,0 +1,17 @@
+{
+  "name": "maelstrom-launcher",
+  "private": true,
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k -n BACKEND,FRONTEND -c green,cyan \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "desktop:dev": "electron .",
+    "dev:backend": "cd backend && python -m app.main",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "install:frontend": "npm --prefix frontend install",
+    "install:backend": "python -m pip install -r backend/requirements.txt"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "electron": "^36.0.0"
+  }
+}
