@@ -300,7 +300,8 @@ export default function TranslatePage() {
         />
       </div>
 
-      <aside style={{ width: qaWidth }} className="flex-shrink-0 flex flex-col bg-white">
+      <QAContainer docId={translationId || undefined} />
+    </div>
         <QAPanel />
       </aside>
     </div>

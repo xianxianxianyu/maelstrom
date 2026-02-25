@@ -46,6 +46,7 @@ from app.api.routes import llm_config as llm_config_route
 from app.api.routes import ocr_config as ocr_config_route
 from app.api.routes import translations as translations_route
 from app.api.routes import agent as agent_route
+from app.api.routes import qa_v2 as qa_v2_route
 from app.api.routes import sse as sse_route
 from app.api.routes import terminology as terminology_route
 from app.api.routes import quality as quality_route
@@ -79,6 +80,7 @@ app.include_router(llm_config_route.router)
 app.include_router(ocr_config_route.router)
 app.include_router(translations_route.router)
 app.include_router(agent_route.router)
+app.include_router(qa_v2_route.router)
 app.include_router(sse_route.router)
 app.include_router(terminology_route.router)
 app.include_router(quality_route.router)
