@@ -6,16 +6,95 @@ const path = require('node:path');
 const PROJECT_ROOT = path.join(__dirname, '..');
 const FRONTEND_URL = 'http://127.0.0.1:3302';
 const BACKEND_HEALTH_URL = 'http://127.0.0.1:3301/health';
+const SHOW_CHILD_LOGS = process.env.MAELSTROM_CHILD_LOGS === '1';
+const SHOW_ERROR_DIALOGS = process.env.MAELSTROM_SHOW_ERROR_DIALOG === '1';
+const CHILD_LOG_TAIL_LIMIT = 120;
+const SCRIPT_READY_URL = Object.freeze({
+  'dev:backend': BACKEND_HEALTH_URL,
+  'dev:frontend': FRONTEND_URL,
+});
+const PORT_IN_USE_PATTERN = /EADDRINUSE|10048|address already in use|attempting to bind on address/i;
 
 const CHILDREN = [];
 let isShuttingDown = false;
 
-function buildScriptCommand(scriptName) {
+function buildScriptSpawnSpec(scriptName) {
   if (process.platform === 'win32') {
-    // 统一切到 UTF-8 代码页，避免 Windows 控制台中文乱码。
-    return `chcp 65001>nul && npm.cmd run ${scriptName}`;
+    // Keep UTF-8 code page inside child shell.
+    return {
+      command: 'cmd.exe',
+      args: ['/d', '/s', '/c', `chcp 65001>nul && npm.cmd run ${scriptName}`],
+    };
   }
-  return `npm run ${scriptName}`;
+  return {
+    command: 'npm',
+    args: ['run', scriptName],
+  };
+}
+
+function appendChildLogTail(state, text) {
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    state.tail.push(trimmed);
+    if (state.tail.length > CHILD_LOG_TAIL_LIMIT) {
+      state.tail.shift();
+    }
+  }
+}
+
+function handleChildOutput(state, chunk, stream) {
+  const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+  if (!text) {
+    return;
+  }
+
+  appendChildLogTail(state, text);
+
+  if (PORT_IN_USE_PATTERN.test(text)) {
+    state.sawPortInUse = true;
+  }
+
+  // Default to quiet mode to avoid Windows terminal mojibake.
+  if (SHOW_CHILD_LOGS) {
+    stream.write(`[${state.scriptName}] ${text}`);
+  }
+}
+
+function pipeChildLogs(state, child) {
+  if (child.stdout) {
+    child.stdout.on('data', (chunk) => {
+      handleChildOutput(state, chunk, process.stdout);
+    });
+  }
+
+  if (child.stderr) {
+    child.stderr.on('data', (chunk) => {
+      handleChildOutput(state, chunk, process.stderr);
+    });
+  }
+}
+
+async function shouldReuseExistingService(scriptName, state) {
+  if (!state.sawPortInUse) {
+    return false;
+  }
+
+  const readyUrl = SCRIPT_READY_URL[scriptName];
+  if (!readyUrl) {
+    return false;
+  }
+
+  const reachable = await ping(readyUrl);
+  if (!reachable) {
+    return false;
+  }
+
+  console.warn(`[electron] ${scriptName} exited with port-in-use, reusing existing service at ${readyUrl}`);
+  return true;
 }
 
 function createChildEnv() {
@@ -28,28 +107,44 @@ function createChildEnv() {
 }
 
 function spawnScript(scriptName) {
-  const command = buildScriptCommand(scriptName);
-  console.log(`[electron] 启动子进程: ${command}`);
+  const { command, args } = buildScriptSpawnSpec(scriptName);
+  const state = {
+    scriptName,
+    tail: [],
+    sawPortInUse: false,
+  };
 
-  const child = spawn(command, {
+  console.log(`[electron] starting child process: ${scriptName}`);
+
+  const child = spawn(command, args, {
     cwd: PROJECT_ROOT,
-    stdio: 'inherit',
-    shell: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: false,
     env: createChildEnv(),
-    windowsHide: false,
+    windowsHide: true,
   });
+
+  pipeChildLogs(state, child);
 
   child.on('error', (error) => {
-    console.error(`[electron] 启动 ${scriptName} 失败:`, error);
+    console.error(`[electron] failed to start ${scriptName}:`, error);
   });
 
-  child.on('exit', (code, signal) => {
+  child.on('exit', async (code, signal) => {
     if (isShuttingDown) {
       return;
     }
     if (code && code !== 0) {
-      console.error(`[electron] 子进程 ${scriptName} 异常退出，code=${code}, signal=${String(signal || '')}`);
-      dialog.showErrorBox('服务异常退出', `${scriptName} 退出码: ${code}`);
+      if (await shouldReuseExistingService(scriptName, state)) {
+        return;
+      }
+
+      console.error(`[electron] child ${scriptName} exited unexpectedly, code=${code}, signal=${String(signal || '')}`);
+      if (state.tail.length > 0) {
+        const recent = state.tail.slice(-10).join('\n');
+        console.error(`[electron] recent logs for ${scriptName}:\n${recent}`);
+      }
+      showErrorDialogIfNeeded('Service exited unexpectedly', `${scriptName} exited with code ${code}`);
       app.quit();
     }
   });
@@ -84,7 +179,23 @@ async function waitForUrl(url, timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 700));
   }
 
-  throw new Error(`等待服务超时: ${url}`);
+  throw new Error(`service startup timeout: ${url}`);
+}
+
+function showErrorDialogIfNeeded(title, message) {
+  if (SHOW_ERROR_DIALOGS) {
+    dialog.showErrorBox(title, message);
+  }
+}
+
+async function ensureService(scriptName, readyUrl, timeoutMs) {
+  if (await ping(readyUrl)) {
+    console.log(`[electron] reusing existing service for ${scriptName}: ${readyUrl}`);
+    return;
+  }
+
+  spawnScript(scriptName);
+  await waitForUrl(readyUrl, timeoutMs);
 }
 
 function cleanupChildren() {
@@ -101,7 +212,7 @@ function cleanupChildren() {
         child.kill('SIGTERM');
       }
     } catch (error) {
-      console.error('[electron] 停止子进程失败:', error);
+      console.error('[electron] failed to stop child process:', error);
     }
   }
 }
@@ -137,21 +248,19 @@ function createWindow() {
 
 async function bootstrap() {
   try {
-    spawnScript('dev:backend');
-    spawnScript('dev:frontend');
-    await waitForUrl(BACKEND_HEALTH_URL, 120000);
-    await waitForUrl(FRONTEND_URL, 120000);
+    await ensureService('dev:backend', BACKEND_HEALTH_URL, 120000);
+    await ensureService('dev:frontend', FRONTEND_URL, 120000);
     createWindow();
   } catch (error) {
-    console.error('[electron] 启动失败:', error);
-    dialog.showErrorBox('启动失败', String(error.message || error));
+    console.error('[electron] bootstrap failed:', error);
+    showErrorDialogIfNeeded('Bootstrap failed', String(error.message || error));
     app.quit();
   }
 }
 
 app.whenReady().then(bootstrap).catch((error) => {
-  console.error('[electron] 初始化失败:', error);
-  dialog.showErrorBox('初始化失败', String(error.message || error));
+  console.error('[electron] initialization failed:', error);
+  showErrorDialogIfNeeded('Initialization failed', String(error.message || error));
   app.quit();
 });
 
