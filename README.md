@@ -105,12 +105,32 @@ test/
 │        └─ translation_store.py
 ├─ agent/
 │  ├─ workflows/translation_workflow.py
-│  ├─ agents/{orchestrator,ocr,terminology,translation,review,index,qa}_agent.py
+│  ├─ agents/
+│  │  ├─ orchestrator_agent.py
+│  │  ├─ ocr_agent.py
+│  │  ├─ terminology_agent.py
+│  │  ├─ translation_agent.py
+│  │  ├─ review_agent.py
+│  │  ├─ index_agent.py
+│  │  ├─ qa_agent.py（v1）
+│  │  ├─ prompt_agent_v2.py（v2 入口）
+│  │  ├─ router_agent.py（v2 路由决策）
+│  │  ├─ writing_agent_v2.py（v2 写作生成）
+│  │  ├─ plan_agent_v2.py（v2 计划生成）
+│  │  └─ verifier_agent_v2.py（v2 验证）
 │  └─ event_bus.py
+│  └─ core/
+│     ├─ qa_context.py（v2 上下文）
+│     ├─ qa_prompts.py（v2 统一Prompt）
+│     ├─ qa_llm.py（v2 统一LLM服务）
+│     ├─ qa_memory.py（v2 会话记忆）
+│     ├─ qa_metrics.py（v2 指标统计）
+│     ├─ qa_logger.py（v2 日志系统）
+│     └─ types.py（v2 核心类型）
 ├─ core/
-│  ├─ llm/
-│  ├─ ocr/
-│  └─ providers/
+│  ├─ llm/（LLM配置与管理）
+│  ├─ ocr/（OCR配置与管理）
+│  └─ providers/（LLM/OCR providers）
 ├─ key/
 │  ├─ llm_config.yaml
 │  └─ ocr_config.yaml
@@ -198,9 +218,24 @@ Electron 主进程会轮询：
 - `PATCH /api/papers/{task_id}/sections/{section}`
 - `PATCH /api/papers/{task_id}/raw`
 
-### QA
+### QA（问答检索）
 
+#### v1 版本
 - `POST /api/agent/qa`（支持 `session_id`、`doc_id`）
+
+#### v2 版本（推荐）
+- `POST /api/agent/qa/v2`：主问答接口，支持 AI 路由决策
+- `GET /api/agent/qa/v2/health`：健康检查
+- `GET /api/agent/qa/v2/trace/{trace_id}`：请求追踪
+- `GET /api/agent/qa/v2/metrics`：请求统计（总请求、路由分布、时延等）
+- `GET /api/agent/qa/v2/logs`：日志查询
+- `GET /api/agent/qa/v2/logs/trace/{trace_id}`：特定trace的完整日志
+
+**QA v2 架构**：
+- 路由策略：`FAST_PATH`（闲聊）、`DOC_GROUNDED`（文档问答）、`MULTI_HOP`（多跳推理）
+- 路由决策由 AI 自动判断
+- 回答生成由 AI 基于证据或常识生成
+- 支持完整的请求追踪和日志记录
 
 ### 配置与密钥
 

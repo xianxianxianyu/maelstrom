@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.services.translation_store import get_translation_store
@@ -16,6 +16,17 @@ from app.services.translation_store import get_translation_store
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# 导入 QA 核心模块
+from agent.core.types import (
+    global_trace_store,
+    TraceContext,
+    RouteType,
+    EvidencePack,
+    Citation,
+)
+from agent.core.qa_memory import qa_session_memory
+from agent.core.qa_metrics import qa_metrics
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agent/qa/v2", tags=["qa-v2"])
@@ -71,6 +82,7 @@ def _deps() -> Dict[str, Any]:
             "RouteType": types_module.RouteType,
             "TraceContext": types_module.TraceContext,
             "CoreCitation": types_module.Citation,
+            "global_trace_store": types_module.global_trace_store,
             "memory": memory_module.qa_session_memory,
             "metrics": metrics_module.qa_metrics,
             "doc_search_tool": doc_tool_module.DocSearchTool(),
@@ -480,21 +492,16 @@ async def get_logs(
     offset: int = Query(0, ge=0),
 ) -> Dict[str, Any]:
     """查询 QA 系统日志
-    
+
     支持按级别、事件类型、trace_id、session_id 过滤
     """
-    return {
-        "logs": [],
-        "total": 0,
-        "limit": limit,
-        "offset": offset,
-        "message": "日志系统已就绪，请在 prompt_agent_v2.py 中添加 logger 调用来记录日志",
-        "example": {
-            "router_decision": "logger.router_decision(query, route, reason, confidence)",
-            "agent_step": "logger.agent_step(agent_name, step, inputs, outputs)",
-            "tool_call": "logger.tool_call(tool_name, action, inputs, outputs)"
-        }
-    }
+    return global_trace_store.query(
+        trace_id=trace_id,
+        event_type=event_type,
+        session_id=session_id,
+        limit=limit,
+        offset=offset,
+    )
 
 
 
@@ -503,11 +510,34 @@ async def get_trace_logs(
     trace_id: str,
 ) -> Dict[str, Any]:
     """获取特定 Trace ID 的所有日志"""
+    trace_ctx = global_trace_store.get(trace_id)
+    if not trace_ctx:
+        return {
+            "trace_id": trace_id,
+            "logs": [],
+            "analysis": {
+                "message": f"Trace {trace_id} 未找到",
+                "available_traces": list(global_trace_store._traces.keys())[-10:]  # 最近10个
+            }
+        }
+
+    events = [
+        {
+            "timestamp": e.timestamp,
+            "event_type": e.event_type,
+            "data": e.data,
+        }
+        for e in trace_ctx.events
+    ]
+
     return {
         "trace_id": trace_id,
-        "logs": [],
+        "start_time": trace_ctx.start_time.isoformat(),
+        "duration_ms": trace_ctx.duration_ms,
+        "event_count": len(events),
+        "logs": events,
         "analysis": {
             "message": "Trace 分析功能已就绪",
-            "usage": "使用 QAOperationContext 自动关联日志到同一个 trace_id"
+            "route": next((e.data.get("route") for e in trace_ctx.events if e.event_type == "response_sent"), None),
         }
     }

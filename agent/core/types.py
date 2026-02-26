@@ -58,11 +58,104 @@ class TraceEvent:
     data: Dict[str, Any]
 
 
+class GlobalTraceStore:
+    """全局trace存储，用于日志查询"""
+
+    def __init__(self) -> None:
+        self._traces: Dict[str, "TraceContext"] = {}
+        self._lock = asyncio.Lock()
+
+    def register(self, trace_ctx: "TraceContext") -> None:
+        """注册trace上下文"""
+        self._traces[trace_ctx.trace_id] = trace_ctx
+
+    def get(self, trace_id: str) -> Optional["TraceContext"]:
+        """获取trace上下文"""
+        return self._traces.get(trace_id)
+
+    def query(
+        self,
+        trace_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """查询日志"""
+        all_events = []
+
+        if trace_id:
+            trace_ctx = self._traces.get(trace_id)
+            if trace_ctx:
+                all_events.extend([
+                    {
+                        "trace_id": trace_ctx.trace_id,
+                        "timestamp": e.timestamp,
+                        "event_type": e.event_type,
+                        "data": e.data,
+                    }
+                    for e in trace_ctx.events
+                ])
+        else:
+            # 返回所有trace的最新事件
+            for tid, trace_ctx in self._traces.items():
+                # 按session_id过滤（如果提供）
+                if session_id:
+                    session_match = False
+                    for e in trace_ctx.events:
+                        if e.data.get("session_id") == session_id:
+                            session_match = True
+                            break
+                    if not session_match:
+                        continue
+
+                # 按event_type过滤（如果提供）
+                if event_type:
+                    matching_events = [e for e in trace_ctx.events if e.event_type == event_type]
+                else:
+                    matching_events = trace_ctx.events
+
+                all_events.extend([
+                    {
+                        "trace_id": trace_ctx.trace_id,
+                        "timestamp": e.timestamp,
+                        "event_type": e.event_type,
+                        "data": e.data,
+                    }
+                    for e in matching_events
+                ])
+
+        # 按时间倒序
+        all_events.sort(key=lambda x: x["timestamp"], reverse=True)
+
+        total = len(all_events)
+        paginated = all_events[offset : offset + limit]
+
+        return {
+            "logs": paginated,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def clear(self) -> None:
+        """清空存储（用于测试）"""
+        self._traces.clear()
+
+
+# 全局trace存储实例
+global_trace_store = GlobalTraceStore()
+
+
 @dataclass
 class TraceContext:
     trace_id: str = field(default_factory=lambda: f"trace_{uuid.uuid4().hex[:20]}")
     start_time: datetime = field(default_factory=datetime.utcnow)
     events: List[TraceEvent] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """自动注册到全局trace存储"""
+        global_trace_store.register(self)
 
     def log_event(self, event_type: str, data: Dict[str, Any]) -> None:
         self.events.append(
