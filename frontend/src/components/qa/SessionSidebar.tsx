@@ -94,7 +94,7 @@ export function SessionSidebar({
           </div>
         ) : (
           sessions.map((session) => {
-            const isActive = currentSession?.id === session.id
+            const isActive = currentSessionId === session.id
             const isHovered = hoveredSessionId === session.id
             const isConfirmingDelete = confirmDeleteId === session.id
 

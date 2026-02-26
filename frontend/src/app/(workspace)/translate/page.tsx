@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { UploadButton } from "@/components/UploadButton"
 import { MarkdownViewer } from "@/components/MarkdownViewer"
 import { LoadingState } from "@/components/LoadingState"
-import { QAPanel } from "@/components/QAPanel"
+import { QAContainer } from "@/components/qa/QAContainer"
 import { TranslationProgress } from "@/components/TranslationProgress"
 import {
   uploadPDF, cancelAllTasks, cancelTask, getTranslation,
@@ -301,9 +301,6 @@ export default function TranslatePage() {
       </div>
 
       <QAContainer docId={translationId || undefined} />
-    </div>
-        <QAPanel />
-      </aside>
     </div>
   )
 }

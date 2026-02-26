@@ -329,6 +329,61 @@ export interface QAResponse {
   }>
 }
 
+export interface QAV2Citation {
+  chunkId: string
+  text: string
+  score: number
+}
+
+export interface QAV2ContextBlock {
+  type: string
+  data?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
+
+export interface QAV2Response {
+  answer: string
+  citations: QAV2Citation[]
+  confidence: number
+  route: string
+  traceId: string
+  contextBlocks: QAV2ContextBlock[]
+}
+
+export interface QAV2Options {
+  timeout_sec?: number
+  max_context_chars?: number
+}
+
+export async function askQuestionV2(
+  params: {
+    query: string
+    docId?: string
+    sessionId?: string
+    options?: QAV2Options
+  },
+  signal?: AbortSignal,
+): Promise<QAV2Response> {
+  const response = await fetch(`${API_BASE}/api/agent/qa/v2`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query: params.query,
+      docId: params.docId || undefined,
+      sessionId: params.sessionId || undefined,
+      options: params.options || undefined,
+    }),
+    signal,
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`QA v2 failed: ${error}`)
+  }
+
+  return response.json()
+}
+
 export async function askQuestion(
   question: string,
   profileName?: string,

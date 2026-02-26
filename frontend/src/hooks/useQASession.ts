@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Message, Session } from "@/components/qa/types"
 import { useLLMConfig } from "@/contexts/LLMConfigContext"
-import { askQuestion, QAResponse } from "@/lib/api"
+import { askQuestionV2 } from "@/lib/api"
 
 function generateId(): string {
   return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -23,7 +23,7 @@ interface UseQASessionOptions {
 
 export function useQASession(options: UseQASessionOptions = {}) {
   const { docId } = options
-  const { profileNames, bindings } = useLLMConfig()
+  const { profileNames } = useLLMConfig()
 
   const [sessions, setSessions] = useState<Session[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
@@ -158,77 +158,32 @@ export function useQASession(options: UseQASessionOptions = {}) {
       )
 
       try {
-        // 准备消息历史
-        const messageHistory = [...messages, userMessage].map((m) => ({
-          role: m.role,
-          content: m.content,
-        }))
-
-        // 获取模型名称
-        const modelName =
-          selectedProfile && bindings[selectedProfile]
-            ? bindings[selectedProfile].model
-            : undefined
-
         // 创建 AbortController 用于取消请求
         abortControllerRef.current = new AbortController()
 
-        // 添加空的 AI 消息用于流式输出
+        const response = await askQuestionV2(
+          {
+            query: content.trim(),
+            docId,
+            sessionId: sessionId || undefined,
+            options: { timeout_sec: 12, max_context_chars: 8000 },
+          },
+          abortControllerRef.current.signal,
+        )
+
         const assistantMessage: Message = {
           id: generateId(),
           role: "assistant",
-          content: "",
+          content: response.answer || "",
+          citations: (response.citations || []).map((citation) => ({
+            text: citation.text,
+            source: citation.chunkId,
+          })),
           timestamp: new Date(),
-          isStreaming: true,
+          isStreaming: false,
         }
 
         setMessages((prev) => [...prev, assistantMessage])
-
-        // 调用 API
-        const response = await askQuestion({
-          question: content.trim(),
-          messages: messageHistory,
-          docId,
-          profile: selectedProfile || undefined,
-          model: modelName,
-          signal: abortControllerRef.current.signal,
-        })
-
-        // 处理流式响应
-        let fullContent = ""
-        let citations: Array<{ text: string; source: string }> = []
-
-        for await (const chunk of response) {
-          if (chunk.content) {
-            fullContent += chunk.content
-            // 更新消息内容
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMessage.id
-                  ? { ...m, content: fullContent, isStreaming: true }
-                  : m
-              )
-            )
-          }
-
-          if (chunk.citations) {
-            citations = chunk.citations
-          }
-        }
-
-        // 完成流式输出
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMessage.id
-              ? {
-                  ...m,
-                  content: fullContent,
-                  citations,
-                  isStreaming: false,
-                }
-              : m
-          )
-        )
       } catch (error: any) {
         if (error.name === "AbortError") {
           // 用户取消，不显示错误
@@ -253,7 +208,6 @@ export function useQASession(options: UseQASessionOptions = {}) {
       createSession,
       messages,
       selectedProfile,
-      bindings,
       docId,
     ]
   )

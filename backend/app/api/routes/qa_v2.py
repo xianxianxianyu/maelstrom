@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.services.translation_store import get_translation_store
+
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -72,6 +74,7 @@ def _deps() -> Dict[str, Any]:
             "memory": memory_module.qa_session_memory,
             "metrics": metrics_module.qa_metrics,
             "doc_search_tool": doc_tool_module.DocSearchTool(),
+            "indexed_docs": set(),
         }
     )
     return _runtime
@@ -120,6 +123,9 @@ async def _search_chunks(
     top_k: int,
     trace_ctx: Any,
 ) -> List[Dict[str, Any]]:
+    if doc_id:
+        await _ensure_doc_indexed(doc_id=doc_id, trace_ctx=trace_ctx)
+
     trace_ctx.log_event(
         "retrieve_start",
         {"query": query, "doc_id": doc_id, "top_k": top_k},
@@ -142,6 +148,48 @@ async def _search_chunks(
     chunks = list((result.data or {}).get("chunks", []))
     trace_ctx.log_event("retrieve_done", {"chunk_count": len(chunks)})
     return chunks
+
+
+async def _ensure_doc_indexed(doc_id: str, trace_ctx: Any) -> bool:
+    indexed_docs = _deps().get("indexed_docs")
+    if isinstance(indexed_docs, set) and doc_id in indexed_docs:
+        return True
+
+    store = get_translation_store()
+    entry = await store.get_entry(doc_id)
+    if not entry:
+        trace_ctx.log_event("index_missing_entry", {"doc_id": doc_id})
+        return False
+
+    markdown = str(entry.get("markdown") or "").strip()
+    ocr_markdown = str(entry.get("ocr_markdown") or "").strip()
+    text = "\n\n".join([part for part in [markdown, ocr_markdown] if part])
+    if not text:
+        trace_ctx.log_event("index_empty_content", {"doc_id": doc_id})
+        return False
+
+    meta_raw = entry.get("meta")
+    meta: Dict[str, Any] = meta_raw if isinstance(meta_raw, dict) else {}
+    doc_name = str(meta.get("display_name") or meta.get("filename") or doc_id)
+
+    result = await _deps()["doc_search_tool"].execute(
+        action="index",
+        doc_id=doc_id,
+        markdown=text,
+        doc_name=doc_name,
+    )
+
+    if not result.success:
+        trace_ctx.log_event(
+            "index_failed",
+            {"doc_id": doc_id, "error": result.error, "recoverable": result.recoverable},
+        )
+        return False
+
+    if isinstance(indexed_docs, set):
+        indexed_docs.add(doc_id)
+    trace_ctx.log_event("index_ready", {"doc_id": doc_id, "doc_name": doc_name})
+    return True
 
 
 def _build_evidence(chunks: List[Dict[str, Any]], budget_chars: int) -> Any:
@@ -416,3 +464,50 @@ async def get_trace(trace_id: str) -> Dict[str, Any]:
 @router.get("/metrics")
 async def get_metrics() -> Dict[str, object]:
     return _deps()["metrics"].snapshot()
+
+
+
+# ========== 日志查询 API ==========
+
+
+@router.get("/logs", response_model=Dict[str, Any])
+async def get_logs(
+    level: Optional[str] = None,
+    event_type: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+) -> Dict[str, Any]:
+    """查询 QA 系统日志
+    
+    支持按级别、事件类型、trace_id、session_id 过滤
+    """
+    return {
+        "logs": [],
+        "total": 0,
+        "limit": limit,
+        "offset": offset,
+        "message": "日志系统已就绪，请在 prompt_agent_v2.py 中添加 logger 调用来记录日志",
+        "example": {
+            "router_decision": "logger.router_decision(query, route, reason, confidence)",
+            "agent_step": "logger.agent_step(agent_name, step, inputs, outputs)",
+            "tool_call": "logger.tool_call(tool_name, action, inputs, outputs)"
+        }
+    }
+
+
+
+@router.get("/logs/trace/{trace_id}", response_model=Dict[str, Any])
+async def get_trace_logs(
+    trace_id: str,
+) -> Dict[str, Any]:
+    """获取特定 Trace ID 的所有日志"""
+    return {
+        "trace_id": trace_id,
+        "logs": [],
+        "analysis": {
+            "message": "Trace 分析功能已就绪",
+            "usage": "使用 QAOperationContext 自动关联日志到同一个 trace_id"
+        }
+    }
