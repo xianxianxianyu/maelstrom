@@ -112,12 +112,11 @@ test/
 │  │  ├─ translation_agent.py
 │  │  ├─ review_agent.py
 │  │  ├─ index_agent.py
-│  │  ├─ qa_agent.py（v1）
-│  │  ├─ prompt_agent_v2.py（v2 入口）
+│  │  ├─ prompt_agent_v2.py（V0 入口）
 │  │  ├─ router_agent.py（v2 路由决策）
-│  │  ├─ writing_agent_v2.py（v2 写作生成）
-│  │  ├─ plan_agent_v2.py（v2 计划生成）
-│  │  └─ verifier_agent_v2.py（v2 验证）
+│  │  ├─ writing_agent_v2.py（V0 写作生成）
+│  │  ├─ plan_agent_v2.py（V0 计划生成）
+│  │  └─ verifier_agent_v2.py（V0 验证）
 │  └─ event_bus.py
 │  └─ core/
 │     ├─ qa_context.py（v2 上下文）
@@ -218,20 +217,16 @@ Electron 主进程会轮询：
 - `PATCH /api/papers/{task_id}/sections/{section}`
 - `PATCH /api/papers/{task_id}/raw`
 
-### QA（问答检索）
+### QA（问答检索，V0）
 
-#### v1 版本
-- `POST /api/agent/qa`（支持 `session_id`、`doc_id`）
+- `POST /api/agent/qa`：主问答接口，支持 AI 路由决策
+- `GET /api/agent/qa/health`：健康检查
+- `GET /api/agent/qa/trace/{trace_id}`：请求追踪
+- `GET /api/agent/qa/metrics`：请求统计（总请求、路由分布、时延等）
+- `GET /api/agent/qa/logs`：日志查询
+- `GET /api/agent/qa/logs/trace/{trace_id}`：特定trace的完整日志
 
-#### v2 版本（推荐）
-- `POST /api/agent/qa/v2`：主问答接口，支持 AI 路由决策
-- `GET /api/agent/qa/v2/health`：健康检查
-- `GET /api/agent/qa/v2/trace/{trace_id}`：请求追踪
-- `GET /api/agent/qa/v2/metrics`：请求统计（总请求、路由分布、时延等）
-- `GET /api/agent/qa/v2/logs`：日志查询
-- `GET /api/agent/qa/v2/logs/trace/{trace_id}`：特定trace的完整日志
-
-**QA v2 架构**：
+**QA V0 架构**：
 - 路由策略：`FAST_PATH`（闲聊）、`DOC_GROUNDED`（文档问答）、`MULTI_HOP`（多跳推理）
 - 路由决策由 AI 自动判断
 - 回答生成由 AI 基于证据或常识生成

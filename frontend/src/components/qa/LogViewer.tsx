@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:3301"
+
 // 简化的日志条目类型
 interface LogEntry {
   id: string
@@ -29,7 +31,7 @@ interface LogViewerProps {
 export function LogViewer({
   sessionId,
   docId,
-  autoRefresh = false,
+  autoRefresh: initialAutoRefresh = false,
   refreshInterval = 5000,
   maxHeight = '600px',
 }: LogViewerProps) {
@@ -39,6 +41,7 @@ export function LogViewer({
   const [filterLevel, setFilterLevel] = useState<string>('ALL')
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedTrace, setSelectedTrace] = useState<string | null>(null)
+  const [autoRefresh, setAutoRefresh] = useState(initialAutoRefresh)
 
   // 获取日志
   const fetchLogs = useCallback(async () => {
@@ -47,12 +50,11 @@ export function LogViewer({
 
     try {
       const params = new URLSearchParams()
-      if (sessionId) params.append('sessionId', sessionId)
-      if (docId) params.append('docId', docId)
+      if (sessionId) params.append('session_id', sessionId)
       if (filterLevel !== 'ALL') params.append('level', filterLevel)
-      if (searchTerm) params.append('search', searchTerm)
+      if (searchTerm) params.append('event_type', searchTerm)
 
-      const response = await fetch(`/api/agent/qa/logs?${params.toString()}`)
+      const response = await fetch(`${API_BASE}/api/agent/qa/logs?${params.toString()}`)
       
       if (!response.ok) {
         throw new Error(`Failed to fetch logs: ${response.statusText}`)
@@ -65,7 +67,9 @@ export function LogViewer({
     } finally {
       setIsLoading(false)
     }
-  }, [sessionId, docId, filterLevel, searchTerm])
+  }, [sessionId, filterLevel, searchTerm])
+
+  const selectedTraceCount = logs.filter((log) => log.trace_id === selectedTrace).length
 
   // 自动刷新
   useEffect(() => {
@@ -196,9 +200,10 @@ export function LogViewer({
                     className={`hover:bg-gray-50 cursor-pointer ${
                       selectedTrace === log.trace_id ? 'bg-blue-50' : ''
                     }`}
-                    onClick={() => setSelectedTrace(
-                      selectedTrace === log.trace_id ? null : log.trace_id
-                    )}
+                    onClick={() => {
+                      const nextTrace = log.trace_id ?? null
+                      setSelectedTrace(selectedTrace === nextTrace ? null : nextTrace)
+                    }}
                   >
                     <td className="px-3 py-2 whitespace-nowrap text-gray-600">
                       {formatTimestamp(log.timestamp)}
@@ -244,7 +249,7 @@ export function LogViewer({
             </button>
           </div>
           <div className="text-sm text-blue-800">
-            <p>该 Trace 包含 {traceMap[selectedTrace]?.length || 0} 条日志记录</p>
+            <p>该 Trace 包含 {selectedTraceCount} 条日志记录</p>
             <p className="mt-1">点击刷新按钮查看完整链路分析</p>
           </div>
         </div>

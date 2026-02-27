@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Message, Session } from "@/components/qa/types"
 import { useLLMConfig } from "@/contexts/LLMConfigContext"
-import { askQuestionV2 } from "@/lib/api"
+import { answerClarification, askQuestion } from "@/lib/api"
 
 function generateId(): string {
   return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -16,6 +16,7 @@ function generateTitle(content: string): string {
 
 const STORAGE_KEY = "qa_sessions"
 const CURRENT_SESSION_KEY = "qa_current_session"
+const CLARIFICATION_KEY = "qa_pending_clarification"
 
 interface UseQASessionOptions {
   docId?: string
@@ -30,6 +31,7 @@ export function useQASession(options: UseQASessionOptions = {}) {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [selectedProfile, setSelectedProfile] = useState<string>("")
+  const [clarificationThreadBySession, setClarificationThreadBySession] = useState<Record<string, string>>({})
 
   const abortControllerRef = useRef<AbortController | null>(null)
 
@@ -51,6 +53,11 @@ export function useQASession(options: UseQASessionOptions = {}) {
       if (savedCurrent) {
         setCurrentSessionId(savedCurrent)
       }
+
+      const pending = localStorage.getItem(CLARIFICATION_KEY)
+      if (pending) {
+        setClarificationThreadBySession(JSON.parse(pending) as Record<string, string>)
+      }
     } catch {
       // 忽略错误
     }
@@ -64,6 +71,14 @@ export function useQASession(options: UseQASessionOptions = {}) {
       // 忽略错误
     }
   }, [sessions])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CLARIFICATION_KEY, JSON.stringify(clarificationThreadBySession))
+    } catch {
+      // 忽略错误
+    }
+  }, [clarificationThreadBySession])
 
   // 保存当前会话 ID
   useEffect(() => {
@@ -114,6 +129,11 @@ export function useQASession(options: UseQASessionOptions = {}) {
   const deleteSession = useCallback(
     (sessionId: string) => {
       setSessions((prev) => prev.filter((s) => s.id !== sessionId))
+      setClarificationThreadBySession((prev) => {
+        const next = { ...prev }
+        delete next[sessionId]
+        return next
+      })
       if (currentSessionId === sessionId) {
         setCurrentSessionId(null)
         setMessages([])
@@ -161,15 +181,45 @@ export function useQASession(options: UseQASessionOptions = {}) {
         // 创建 AbortController 用于取消请求
         abortControllerRef.current = new AbortController()
 
-        const response = await askQuestionV2(
-          {
-            query: content.trim(),
-            docId,
-            sessionId: sessionId || undefined,
-            options: { timeout_sec: 12, max_context_chars: 8000 },
-          },
-          abortControllerRef.current.signal,
-        )
+        const pendingThreadId = clarificationThreadBySession[sessionId]
+
+        const response = pendingThreadId
+          ? await answerClarification(
+              {
+                threadId: pendingThreadId,
+                sessionId,
+                answer: content.trim(),
+              },
+              abortControllerRef.current.signal,
+            )
+          : await askQuestion(
+              {
+                query: content.trim(),
+                docId,
+                sessionId: sessionId || undefined,
+                options: { timeout_sec: 12, max_context_chars: 8000 },
+              },
+              abortControllerRef.current.signal,
+            )
+
+        if (response.status === "clarification_pending") {
+          const threadId = response.clarification?.threadId
+          if (threadId) {
+            setClarificationThreadBySession((prev) => ({
+              ...prev,
+              [sessionId]: threadId,
+            }))
+          }
+        } else {
+          setClarificationThreadBySession((prev) => {
+            if (!prev[sessionId]) {
+              return prev
+            }
+            const next = { ...prev }
+            delete next[sessionId]
+            return next
+          })
+        }
 
         const assistantMessage: Message = {
           id: generateId(),
@@ -206,8 +256,7 @@ export function useQASession(options: UseQASessionOptions = {}) {
     [
       currentSessionId,
       createSession,
-      messages,
-      selectedProfile,
+      clarificationThreadBySession,
       docId,
     ]
   )

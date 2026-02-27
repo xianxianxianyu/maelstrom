@@ -321,56 +321,111 @@ export async function updatePaperRaw(
 // ── Agent QA API ──
 
 export interface QAResponse {
+  status: "completed" | "clarification_pending"
   answer: string
-  profile_used: string
-  citations?: Array<{
-    text: string
-    source: string
-  }>
+  citations: QACitation[]
+  confidence: number
+  route: string
+  traceId: string
+  contextBlocks: QAContextBlock[]
+  sessionId?: string
+  turnId?: string
+  clarification?: {
+    threadId: string
+    question: string
+    options: string[]
+  }
 }
 
-export interface QAV2Citation {
+export interface QACitation {
   chunkId: string
   text: string
   score: number
 }
 
-export interface QAV2ContextBlock {
+export interface QAContextBlock {
   type: string
   data?: Record<string, unknown>
   metadata?: Record<string, unknown>
 }
 
-export interface QAV2Response {
-  answer: string
-  citations: QAV2Citation[]
-  confidence: number
-  route: string
-  traceId: string
-  contextBlocks: QAV2ContextBlock[]
-}
-
-export interface QAV2Options {
+export interface QAOptions {
   timeout_sec?: number
   max_context_chars?: number
 }
 
-export async function askQuestionV2(
+interface QAV1RawResponse {
+  status: string
+  session_id: string
+  turn_id: string
+  trace_id: string
+  answer?: string
+  confidence?: number
+  intent_tag?: string
+  stage1_result?: Record<string, unknown>
+  stage2_result?: Record<string, unknown>
+  clarification?: {
+    thread_id?: string
+    question?: string
+    options?: string[]
+  }
+}
+
+function mapQAV1RawResponse(raw: QAV1RawResponse): QAResponse {
+  const base = {
+    status: raw.status === "clarification_pending" ? "clarification_pending" : "completed",
+    confidence: raw.confidence ?? 0.7,
+    route: raw.intent_tag || (raw.status === "clarification_pending" ? "clarification_pending" : "DOC_QA"),
+    traceId: raw.trace_id,
+    sessionId: raw.session_id,
+    turnId: raw.turn_id,
+    contextBlocks: [
+      { type: "stage1", data: raw.stage1_result || {} },
+      { type: "stage2", data: raw.stage2_result || {} },
+    ],
+  } satisfies Omit<QAResponse, "answer" | "citations">
+
+  if (raw.status === "clarification_pending") {
+    const question = raw.clarification?.question || "请补充更多信息后重试。"
+    const options = raw.clarification?.options || []
+    const threadId = raw.clarification?.thread_id || ""
+    return {
+      ...base,
+      answer: question,
+      citations: [],
+      clarification: threadId
+        ? {
+            threadId,
+            question,
+            options,
+          }
+        : undefined,
+    }
+  }
+
+  return {
+    ...base,
+    answer: raw.answer || "",
+    citations: [],
+  }
+}
+
+export async function askQuestion(
   params: {
     query: string
     docId?: string
     sessionId?: string
-    options?: QAV2Options
+    options?: QAOptions
   },
   signal?: AbortSignal,
-): Promise<QAV2Response> {
-  const response = await fetch(`${API_BASE}/api/agent/qa/v2`, {
+): Promise<QAResponse> {
+  const response = await fetch(`${API_BASE}/api/qa/v1/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       query: params.query,
-      docId: params.docId || undefined,
-      sessionId: params.sessionId || undefined,
+      docScope: params.docId ? [params.docId] : [],
+      sessionId: params.sessionId || null,
       options: params.options || undefined,
     }),
     signal,
@@ -378,35 +433,38 @@ export async function askQuestionV2(
 
   if (!response.ok) {
     const error = await response.text()
-    throw new Error(`QA v2 failed: ${error}`)
+    throw new Error(`QA failed: ${error}`)
   }
 
-  return response.json()
+  const raw: QAV1RawResponse = await response.json()
+  return mapQAV1RawResponse(raw)
 }
 
-export async function askQuestion(
-  question: string,
-  profileName?: string,
-  context?: string,
-  sessionId?: string,
-  docId?: string,
+export async function answerClarification(
+  params: {
+    threadId: string
+    sessionId: string
+    answer: string
+  },
+  signal?: AbortSignal,
 ): Promise<QAResponse> {
-  const response = await fetch(`${API_BASE}/api/agent/qa`, {
+  const response = await fetch(`${API_BASE}/api/qa/v1/clarify/${encodeURIComponent(params.threadId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      question,
-      profile_name: profileName || undefined,
-      context: context || undefined,
-      session_id: sessionId || undefined,
-      doc_id: docId || undefined,
+      sessionId: params.sessionId,
+      answer: params.answer,
     }),
+    signal,
   })
+
   if (!response.ok) {
     const error = await response.text()
-    throw new Error(`QA failed: ${error}`)
+    throw new Error(`QA clarification failed: ${error}`)
   }
-  return response.json()
+
+  const raw: QAV1RawResponse = await response.json()
+  return mapQAV1RawResponse(raw)
 }
 
 

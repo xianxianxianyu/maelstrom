@@ -1,283 +1,223 @@
-# Maelstrom QA v2 架构与落地总方案（融合版）
+# Maelstrom QA V1 架构说明（Context-First）
 
-> 本文档用于统一说明 QA v2 的目标、架构设计、实施路线与本轮执行总结。
-> 这是对历史 `qa.md` 内容的融合重写：保留核心思想，删除过重治理细节，强调“先跑通、可验证、可迭代”。
-
----
-
-## 1. 文档目标
-
-本方案回答三件事：
-
-1. **我们要做成什么**（目标与边界）
-2. **我们准备怎么做**（架构、模块、接口、路线）
-3. **我们已经做到什么**（plan 与 task 执行总结）
+> 本文档描述当前已落地的 QA V1 方案。
+> 目标是让 QA 的底层从“临时会话缓存”升级为“标准化 QA Context 系统”。
 
 ---
 
-## 2. 目标与边界
+## 1. 设计目标
 
-### 2.1 目标
+QA V1 的核心目标是：
 
-- 把 QA 从“单一问答调用”升级为“可编排的多代理流水线”。
-- 保持证据优先：答案必须可回溯到引用片段（citation）。
-- 保持成本可控：支持超时和上下文预算硬限制。
-- 保持兼容：旧接口 `/api/agent/qa` 不受影响，新能力走 `/api/agent/qa/v2`。
-- 保持可迭代：先落地最小可用，再逐步增强多跳推理与观测能力。
-
-### 2.2 非目标（当前阶段不做）
-
-- 不引入重型基础设施（如分布式调度器、复杂事件总线改造）。
-- 不在首版引入完整安全治理体系（注入策略、深度审计、数据合规生命周期等）。
-- 不重写现有 Translation 等其他业务流程。
+1. **Context 先行**：每次问答先进入上下文内核，再做意图识别与子任务执行。
+2. **会话隔离**：每个 `session` 拥有独立存储空间（独立 SQLite 文件）。
+3. **固定对话格式**：每个 `turn` 使用统一 schema，强制包含 `summary`、`tags`、`intent_tag`。
+4. **可索引可判断**：支持按 query/tag/intent/entity 检索历史对话，用于 Stage1/Stage2 决策。
+5. **subagent 可替换**：编排层只依赖 capability，不绑定具体 agent 实现。
 
 ---
 
-## 3. 架构设计（融合保留版）
+## 2. 当前入口与接口
 
-## 3.1 总体架构
+当前 QA V1 后端入口为：
+
+- `POST /api/qa/v1/query`
+- `POST /api/qa/v1/clarify/{thread_id}`
+- `GET /api/qa/v1/sessions/{session_id}/turns`
+- `GET /api/qa/v1/turns/{turn_id}?session_id=...`
+- `GET /api/qa/v1/health`
+
+应用已在 `backend/app/main.py` 注册 `qa_v1_route.router`。
+
+---
+
+## 3. 总体架构
 
 ```text
-Client(QAPanel)
-  -> POST /api/agent/qa/v2
-    -> PromptAgentV2 (输入规范化 + 路由决策)
-    -> PlanAgentV2   (生成结构化计划)
-    -> DAGExecutor   (按依赖执行节点)
-        -> Retrieve / Reason / Write / Verify
-    -> Verifier 不通过 => 统一回退到单跳检索 QA
-  <- Response(answer, citations, confidence, route, traceId, contextBlocks)
+Client
+  -> /api/qa/v1/query
+    -> QAContextKernel
+       1) create_session + append pending turn
+       2) Stage1 (coarse intent + context selection)
+       3) Stage2 (sub-problems + routing plan)
+       4) Clarification Gate (if needed)
+       5) SubagentRunner (capability-based execution)
+       6) Enrichment (summary/tags/entities)
+       7) commit turn + index update
+  <- KernelResponse
 ```
 
-## 3.2 核心设计思想
+澄清分支：
 
-- **Prompt 与 Router/Gate 融合**：入口统一处理 query 规范化、路由选择、上下文块组织。
-- **Plan 与执行解耦**：先产出结构化 plan，再由 DAG 执行，便于扩展节点与重试策略。
-- **写作与校验分离**：Writing 负责组织答案，Verifier 负责“是否可信且有证据”。
-- **失败统一兜底**：任何关键阶段失败，统一降级为单跳检索路径，避免请求中断。
-- **观测内建**：每次请求产生 trace，累计 metrics，支持后续调优。
-
-## 3.3 路由策略
-
-- `FAST_PATH`：短问/轻问，快速响应。
-- `DOC_GROUNDED`：文档内问答主路径，检索证据后写作。
-- `MULTI_HOP`：复杂问题路径，支持多检索节点 + 推理节点。
-
----
-
-## 4. 最小非模型机制（保留项）
-
-为降低首版复杂度，仅保留 3 项必须机制：
-
-1. **真值对齐**：grounded 路径必须有 citation，且 citation 能在证据集中命中。
-2. **成本上限**：通过 `timeout_sec` 与 `max_context_chars` 做执行与上下文硬约束。
-3. **失败兜底**：计划、执行或验证失败时，统一回退到单跳检索 QA。
-
-其余治理类议题（安全策略、深度审计、数据生命周期）后置到后续产品化阶段。
-
----
-
-## 5. 模块设计（按职责）
-
-## 5.1 PromptAgentV2
-
-职责：
-
-- 输入标准化（query 规整）
-- 路由决策（`FAST_PATH`/`DOC_GROUNDED`/`MULTI_HOP`）
-- 输出 `context_blocks`
-
-产出：`route`, `context_blocks`, `confidence`, `normalized_query`
-
-## 5.2 PlanAgentV2
-
-职责：根据 route 生成可执行计划（`QAPlan`）。
-
-- `FAST_PATH`: `write -> verify`
-- `DOC_GROUNDED`: `retrieve -> write -> verify`
-- `MULTI_HOP`: `retrieve_primary + retrieve_secondary -> reason -> write -> verify`
-
-## 5.3 DAGExecutor
-
-职责：
-
-- 按依赖执行节点
-- 注入依赖节点结果到下游节点参数
-- 节点失败可被上层识别并触发统一回退
-
-## 5.4 WritingAgentV2
-
-职责：基于 `EvidencePack` 生成回答。
-
-- 无证据：返回保守答复
-- 有证据：抽取前 3 条证据形成答案与 citation
-
-## 5.5 VerifierAgentV2
-
-职责：规则校验输出。
-
-- grounded 路径缺 citation -> 不通过
-- citation 不在证据中 -> 不通过
-- answer 为空 -> 不通过
-
-## 5.6 会话记忆与指标
-
-- `QASessionMemory`：按 `session_id` 管理多轮上下文，支持 `doc_id` 过滤。
-- `QAMetrics`：统计总请求、fallback、verify 失败、平均时延、route 分布。
-
----
-
-## 6. API 设计（v2）
-
-## 6.1 请求模型
-
-`POST /api/agent/qa/v2`
-
-```json
-{
-  "query": "string",
-  "docId": "string | null",
-  "sessionId": "string | null",
-  "options": {
-    "timeout_sec": 8,
-    "max_context_chars": 6000
-  }
-}
+```text
+clarification_pending
+  -> /api/qa/v1/clarify/{thread_id}
+    -> merge clarification
+    -> rerun query pipeline
 ```
 
-## 6.2 响应模型
+---
 
-```json
-{
-  "answer": "string",
-  "citations": [{ "chunkId": "string", "text": "string", "score": 0.0 }],
-  "confidence": 0.0,
-  "route": "FAST_PATH | DOC_GROUNDED | MULTI_HOP",
-  "traceId": "string",
-  "contextBlocks": []
-}
-```
+## 4. 关键模块与职责
 
-## 6.3 观测端点
+### 4.1 Context Kernel
 
-- `GET /api/agent/qa/v2/health`
-- `GET /api/agent/qa/v2/trace/{trace_id}`
-- `GET /api/agent/qa/v2/metrics`
+- 文件：`agent/qa_context_v1/kernel.py`
+- 负责统一流程编排：ingest、stage1、stage2、clarification、subagent 执行、commit。
+
+### 4.2 会话存储（SessionSQLiteStore）
+
+- 文件：`agent/qa_context_v1/store.py`
+- 每个 session 一个独立 DB：`data/qa_v1/sessions/{session_id}/context.db`
+- 核心表：
+  - `session_meta`
+  - `turns`
+  - `turn_tags`
+  - `turn_entities`
+  - `clarifications`
+  - `artifacts`
+
+### 4.3 索引器（QAContextIndexer）
+
+- 文件：`agent/qa_context_v1/indexer.py`
+- 基于 query 文本重叠与时序做候选上下文排序。
+
+### 4.4 澄清管理器（ClarificationManager）
+
+- 文件：`agent/qa_context_v1/clarification.py`
+- 负责是否澄清判断（由 Stage2 触发）、创建线程、合并澄清答案。
+
+### 4.5 对话增强器（TurnEnricher）
+
+- 文件：`agent/qa_context_v1/enrichment.py`
+- 负责生成 `summary`、`entities`、`tags`、`topic_tags`。
+
+### 4.6 可插拔 subagent 编排层
+
+- 文件：
+  - `agent/qa_orchestration/contracts.py`
+  - `agent/qa_orchestration/subagent_registry.py`
+  - `agent/qa_orchestration/subagent_runner.py`
+- 默认能力映射：
+  - `context.retrieve` -> `retrieval-subagent`
+  - `reasoning.synthesize` -> `reasoning-subagent`
+  - `response.compose` -> `response-subagent`
 
 ---
 
-## 7. 兼容策略
+## 5. 固定对话 Schema（V1）
 
-- 旧接口 `/api/agent/qa` 保持原有行为。
-- 新接口 `/api/agent/qa/v2` 并行提供新能力。
-- `backend/app/main.py` 同时注册 `agent_route.router` 与 `qa_v2_route.router`。
+核心对象：`DialogueTurn`（`schema_version = qa-turn-v1`）
 
----
+必备字段：
 
-## 8. 落地路线（重写后的执行版）
+- 身份与时序：`turn_id`, `session_id`, `created_at`, `updated_at`
+- 输入输出：`user_query`, `assistant_answer`
+- 可索引字段：`summary`, `tags`, `topic_tags`, `intent_tag`, `entities`
+- 证据与引用：`referenced_docs`, `citations`
+- 决策工件：`stage1_result`, `stage2_result`, `routing_plan`, `agent_runs`
+- 状态与追踪：`status`, `trace_id`, `clarification_thread_id`, `error`
 
-## 8.1 Phase A：基线打通
-
-- 新增 v2 路由与契约
-- 路由注册、健康检查、trace 初始能力
-
-验收：v1 不回归、v2 可调用、返回结构稳定。
-
-## 8.2 Phase B：核心子代理
-
-- Prompt/Plan/DAG/Writing/Verifier 主链路接通
-- grounded 失败统一兜底
-
-验收：主链路可执行，失败可预期降级。
-
-## 8.3 Phase C：记忆与观测
-
-- session memory 接入
-- metrics 聚合与查询端点
-
-验收：多轮上下文可读，metrics 可观测。
-
-## 8.4 Phase D：稳态迭代
-
-- 优化真实 multi-hop 策略
-- 增加更系统的评测与回归
-- 再逐步纳入后置治理项
+说明：`summary/tags/intent_tag` 在 V1 中是强制写入字段，不再可选。
 
 ---
 
-## 9. 本轮 Plan 总结（融合你要求的内容）
+## 6. Stage1 / Stage2（当前实现）
 
-本轮 plan 采用“Wave 分阶段执行”：
+### Stage1（粗粒度）
 
-- **Wave 1**：基础设施与 API 骨架
-- **Wave 2**：核心子代理实现
-- **Wave 3**：记忆与降级机制
-- **Wave 4**：质量观测最小闭环
-- **Wave 5**：验证与文档同步
+- 输入：query + session 上下文候选
+- 输出：`Stage1Result`
+  - `coarse_intent`
+  - `confidence`
+  - `relevant_context_ids`
+  - `selection_reasoning`
+  - `needs_refinement`
 
-计划原则：
+当前规则实现：
 
-- 先保证可跑通，再逐步增强
-- 每一波都有可验证产物
-- 不引入超出当前目标的重治理复杂度
+- 问候类 -> `CHAT`
+- 极短或显著歧义问句 -> `AMBIGUOUS`
+- 包含“对比/分别/并且”等 -> `MULTI_PART`
+- 其他 -> `DOC_QA`
 
----
+### Stage2（细粒度）
 
-## 10. 本轮 Task 执行总结（已落地）
+- 输入：query + Stage1Result
+- 输出：`Stage2Result`
+  - `sub_problems`
+  - `routing_plan`
+  - `clarification_needed`
+  - `overall_confidence`
 
-## 10.1 已完成项
+当前策略：
 
-### A. 核心架构与模块
-
-- `agent/agents/plan_agent_v2.py`：结构化计划生成
-- `agent/agents/writing_agent_v2.py`：证据约束写作
-- `agent/agents/verifier_agent_v2.py`：规则校验
-- `agent/core/types.py`：补齐核心类型与 `TraceContext`
-
-### B. 路由与流程
-
-- `backend/app/api/routes/qa_v2.py`：
-  - 主接口 `POST /api/agent/qa/v2`
-  - `health/trace/metrics` 端点
-  - 主链路执行 + 统一回退
-  - `timeout_sec`、`max_context_chars` 约束
-
-### C. 记忆与观测
-
-- `agent/core/qa_memory.py`：内存会话管理
-- `agent/core/qa_metrics.py`：请求/失败/时延/路由统计
-
-### D. 应用集成
-
-- `backend/app/main.py`：注册 `qa_v2_route.router`
-- 保持 v1 与 v2 并行
-
-## 10.2 验证结果（本轮）
-
-- 编译检查通过：新增/修改的 Python 文件 `py_compile` 通过。
-- 回归测试通过：`agent/agents/test_qa_agent.py` 通过（33 passed）。
-- 运行时验证通过：
-  - v2 返回有效 `route`、`traceId`
-  - `metrics` 可读（`total_requests`、`total_fallback`、`route_counter`）
+- `needs_refinement = true` 时，进入 clarification。
+- 否则切分子问题并生成 capability 计划：retrieve -> (reason) -> response。
 
 ---
 
-## 11. 当前差距与下一步任务
+## 7. 前端澄清闭环（已接通）
 
-当前已具备“可运行的最小闭环”，但仍有明确增量空间：
+### API 适配
 
-1. `MULTI_HOP` 仍是轻量版（双检索 + 合并），需升级为更真实的多跳推理策略。
-2. `trace` 当前为进程内存存储，后续可接持久化。
-3. 需要补充针对 `qa_v2` 的专门测试集（路由判定、verify 失败回退、预算/超时边界）。
-4. 后置治理项（安全策略、深度审计、数据生命周期）按产品化阶段逐步引入。
+- 文件：`frontend/src/lib/api.ts`
+- `askQuestion()` 已切换到 `POST /api/qa/v1/query`
+- 新增 `answerClarification()` 对接 `POST /api/qa/v1/clarify/{thread_id}`
+- 支持 `clarification_pending` 响应映射
+
+### 会话 Hook
+
+- 文件：`frontend/src/hooks/useQASession.ts`
+- 新增 `clarificationThreadBySession` 状态并持久化
+- `sendMessage()` 自动判断：
+  - 无 pending thread -> 发 query
+  - 有 pending thread -> 发 clarify
+- 澄清完成后自动清理 pending thread
+
+### QAPanel
+
+- 文件：`frontend/src/components/QAPanel.tsx`
+- 已支持 panel 内澄清续答链路（pending 时下一条输入走 clarify）
 
 ---
 
-## 12. 结论
+## 8. 测试与验证
 
-本版方案已完成你要求的融合：
+新增测试：
 
-- **架构设计**：统一成一条从入口到验证再到回退的闭环。
-- **目标想法**：明确“先跑通、可验证、可控成本、兼容旧接口”的核心方向。
-- **plan + task 总结**：把本轮分波计划与实际执行结果落到文档里。
+- `agent/tests/test_qa_v1_context_kernel.py`
+- `agent/tests/test_qa_v1_subagent_registry.py`
+- `agent/tests/test_qa_v1_clarification.py`
 
-最终状态：QA v2 已从设计稿进入“可运行版本”，下一步进入“质量增强与策略深化”。
+已验证结果：
+
+- `pytest`：`7 passed`
+- 前端构建：`npm run build` 通过
+- `py_compile`：新增/修改核心 Python 文件通过
+
+---
+
+## 9. 当前限制与后续迭代建议
+
+当前 V1 已可运行，但仍有提升空间：
+
+1. Stage1/Stage2 目前仍是规则主导，可逐步替换为更强的模型化决策。
+2. context ranking 当前为轻量打分，可升级为 FTS + embedding 混合召回。
+3. clarification 目前是一问一答恢复，可升级多轮澄清线程与超时策略。
+4. subagent 目前内置默认实现，后续可按 capability 热插拔业务代理。
+5. 前端会话历史加载逻辑可继续完善（当前 `switchSession` 仍留有服务端加载扩展点）。
+
+---
+
+## 10. 结论
+
+QA 已从 V0 的“路由驱动问答”升级到 V1 的“Context-First 底座架构”：
+
+- 会话隔离：已满足
+- 固定格式：已满足
+- 标签/摘要索引：已满足（结构化字段 + 索引表）
+- 两阶段识别可落地前提：已满足
+- subagent 可替换：已满足（capability registry）
+
+下一步可以直接在这套底座上推进你后续的 subagent 改造与两阶段策略增强。

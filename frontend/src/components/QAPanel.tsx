@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useMemo } from "react"
-import { askQuestion, QAResponse } from "@/lib/api"
+import { answerClarification, askQuestion, QAResponse } from "@/lib/api"
 import { useLLMConfig } from "@/contexts/LLMConfigContext"
 
 interface Citation {
@@ -29,6 +29,7 @@ export function QAPanel({ docId }: Props) {
   const [input, setInput] = useState("")
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
+  const [pendingClarificationThreadId, setPendingClarificationThreadId] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const sessionId = useMemo(() => generateSessionId(), [])
 
@@ -47,16 +48,38 @@ export function QAPanel({ docId }: Props) {
 
   const handleSend = async () => {
     const q = input.trim()
-    if (!q || !selectedProfile || loading) return
+    if (!q || loading) return
     setInput("")
     setMessages((prev) => [...prev, { role: "user", content: q }])
     setLoading(true)
     try {
-      const res: QAResponse = await askQuestion(q, selectedProfile, undefined, sessionId, docId)
+      const res: QAResponse = pendingClarificationThreadId
+        ? await answerClarification({
+            threadId: pendingClarificationThreadId,
+            sessionId,
+            answer: q,
+          })
+        : await askQuestion({
+            query: q,
+            docId,
+            sessionId,
+            options: { timeout_sec: 12, max_context_chars: 8000 },
+          })
+
+      if (res.status === "clarification_pending") {
+        setPendingClarificationThreadId(res.clarification?.threadId || null)
+      } else {
+        setPendingClarificationThreadId(null)
+      }
+
+      const clarificationOptions = res.clarification?.options?.length
+        ? `\n\n可补充项：${res.clarification.options.join(" / ")}`
+        : ""
+
       setMessages((prev) => [...prev, {
         role: "assistant",
-        content: res.answer,
-        citations: res.citations,
+        content: `${res.answer}${clarificationOptions}`,
+        citations: (res.citations || []).map((cite) => ({ text: cite.text, source: cite.chunkId })),
       }])
     } catch (err: any) {
       setMessages((prev) => [...prev, {
@@ -151,12 +174,11 @@ export function QAPanel({ docId }: Props) {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend() } }}
             placeholder="输入问题..."
-            disabled={!selectedProfile}
             className="flex-1 px-3 py-2 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-indigo-300 bg-gray-50 disabled:bg-gray-100"
           />
           <button
             onClick={handleSend}
-            disabled={loading || !input.trim() || !selectedProfile}
+            disabled={loading || !input.trim()}
             className="px-3 py-2 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:bg-gray-300 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
