@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react"
 import { cn } from "@/lib/utils"
-import { Session } from "./QADialog"
+import type { Session } from "./types"
 
 interface SessionSidebarProps {
   sessions: Session[]

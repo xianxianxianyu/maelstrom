@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -10,6 +11,7 @@ from agent.qa_context_v1.kernel import QAContextKernel
 from agent.qa_context_v1.models import QueryRequest
 
 router = APIRouter(prefix="/api/qa/v1", tags=["qa-v1"])
+logger = logging.getLogger(__name__)
 
 _kernel: QAContextKernel | None = None
 
@@ -25,6 +27,7 @@ def _get_kernel() -> QAContextKernel:
 class QueryPayload(BaseModel):
     query: str = Field(min_length=1)
     sessionId: str | None = None
+    traceId: str | None = None
     docScope: list[str] = Field(default_factory=list)
     options: dict[str, Any] = Field(default_factory=dict)
 
@@ -37,23 +40,52 @@ class ClarifyPayload(BaseModel):
 @router.post("/query")
 async def query(payload: QueryPayload) -> dict[str, Any]:
     kernel = _get_kernel()
+    logger.info(
+        "qa query received",
+        extra={
+            "trace_id": payload.traceId,
+            "session_id": payload.sessionId,
+            "query_len": len(payload.query),
+            "doc_scope_size": len(payload.docScope),
+        },
+    )
     try:
         result = await kernel.handle_query(
             QueryRequest(
                 query=payload.query,
                 session_id=payload.sessionId,
+                trace_id=payload.traceId,
                 doc_scope=payload.docScope,
                 options=payload.options,
             )
         )
     except ValueError as exc:
+        logger.warning(
+            "qa query validation failed",
+            extra={"trace_id": payload.traceId, "session_id": payload.sessionId, "error": str(exc)},
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logger.info(
+        "qa query completed",
+        extra={
+            "trace_id": result.trace_id,
+            "session_id": result.session_id,
+            "turn_id": result.turn_id,
+            "status": result.status,
+            "confidence": result.confidence,
+            "has_clarification": result.status == "clarification_pending",
+        },
+    )
     return result.to_dict()
 
 
 @router.post("/clarify/{thread_id}")
 async def clarify(thread_id: str, payload: ClarifyPayload) -> dict[str, Any]:
     kernel = _get_kernel()
+    logger.info(
+        "qa clarification received",
+        extra={"session_id": payload.sessionId, "thread_id": thread_id, "answer_len": len(payload.answer)},
+    )
     try:
         result = await kernel.handle_clarification(
             session_id=payload.sessionId,
@@ -64,6 +96,10 @@ async def clarify(thread_id: str, payload: ClarifyPayload) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logger.info(
+        "qa clarification completed",
+        extra={"session_id": result.session_id, "turn_id": result.turn_id, "status": result.status},
+    )
     return result.to_dict()
 
 
@@ -80,6 +116,42 @@ async def get_turn(turn_id: str, session_id: str = Query(...)) -> dict[str, Any]
     if turn is None:
         raise HTTPException(status_code=404, detail="turn not found")
     return turn
+
+
+@router.get("/execution/{trace_id}")
+async def get_execution(trace_id: str) -> dict[str, Any]:
+    kernel = _get_kernel()
+    snapshot = kernel.get_execution_snapshot(trace_id)
+    if snapshot is None:
+        logger.warning("qa execution snapshot missing", extra={"trace_id": trace_id})
+        raise HTTPException(status_code=404, detail="execution trace not found")
+    logger.info("qa execution snapshot fetched", extra={"trace_id": trace_id})
+    return snapshot
+
+
+@router.get("/execution/{trace_id}/events")
+async def get_execution_events(trace_id: str) -> dict[str, Any]:
+    kernel = _get_kernel()
+    return {"trace_id": trace_id, "events": kernel.get_execution_events(trace_id)}
+
+
+@router.post("/execution/{trace_id}/retry")
+async def retry_execution(trace_id: str) -> dict[str, Any]:
+    kernel = _get_kernel()
+    logger.info("qa execution retry requested", extra={"trace_id": trace_id})
+    try:
+        result = await kernel.retry_execution(trace_id)
+    except KeyError as exc:
+        logger.warning("qa execution retry miss", extra={"trace_id": trace_id, "error": str(exc)})
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("qa retry failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    logger.info(
+        "qa execution retry completed",
+        extra={"trace_id": trace_id, "new_trace_id": result.trace_id, "status": result.status},
+    )
+    return result.to_dict()
 
 
 @router.get("/health")

@@ -9,8 +9,8 @@ class TurnEnricher:
         query_part = query.strip().replace("\n", " ")[:64]
         answer_part = (answer or "").strip().replace("\n", " ")[:64]
         if answer_part:
-            return f"Q: {query_part} | A: {answer_part}"
-        return f"Q: {query_part}"
+            return f"主题: {query_part}；结论: {answer_part}"
+        return f"主题: {query_part}"
 
     def extract_entities(self, query: str, answer: str | None) -> list[dict[str, Any]]:
         text = f"{query} {answer or ''}"

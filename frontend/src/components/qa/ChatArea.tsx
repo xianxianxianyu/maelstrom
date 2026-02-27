@@ -2,22 +2,14 @@
 
 import { useState, useRef, useEffect } from "react"
 import { cn } from "@/lib/utils"
-
-export interface Message {
-  id: string
-  role: "user" | "assistant"
-  content: string
-  citations?: Array<{
-    text: string
-    source: string
-  }>
-  timestamp: Date
-}
+import type { Message } from "./types"
+import { ExecutionFlowPanel } from "./ExecutionFlowPanel"
 
 interface ChatAreaProps {
   messages: Message[]
   isLoading: boolean
   onSendMessage: (content: string) => void
+  onRetryExecution?: (traceId: string) => void
   selectedProfile: string
 }
 
@@ -25,6 +17,7 @@ export function ChatArea({
   messages,
   isLoading,
   onSendMessage,
+  onRetryExecution,
   selectedProfile,
 }: ChatAreaProps) {
   const [input, setInput] = useState("")
@@ -84,6 +77,7 @@ export function ChatArea({
               key={message.id}
               message={message}
               isLast={index === messages.length - 1}
+              onRetryExecution={onRetryExecution}
             />
           ))
         )}
@@ -157,9 +151,10 @@ export function ChatArea({
 interface MessageBubbleProps {
   message: Message
   isLast: boolean
+  onRetryExecution?: (traceId: string) => void
 }
 
-function MessageBubble({ message, isLast }: MessageBubbleProps) {
+function MessageBubble({ message, isLast, onRetryExecution }: MessageBubbleProps) {
   const isUser = message.role === "user"
   const [copied, setCopied] = useState(false)
 
@@ -253,6 +248,10 @@ function MessageBubble({ message, isLast }: MessageBubbleProps) {
           <div className="whitespace-pre-wrap break-words">
             {renderContent(message.content)}
           </div>
+
+          {!isUser && message.execution ? (
+            <ExecutionFlowPanel execution={message.execution} onRetryExecution={onRetryExecution} />
+          ) : null}
 
           {/* 引用来源 */}
           {!isUser && message.citations && message.citations.length > 0 && (

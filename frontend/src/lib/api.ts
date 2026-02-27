@@ -328,6 +328,7 @@ export interface QAResponse {
   route: string
   traceId: string
   contextBlocks: QAContextBlock[]
+  execution?: QAExecutionSnapshot
   sessionId?: string
   turnId?: string
   clarification?: {
@@ -349,6 +350,81 @@ export interface QAContextBlock {
   metadata?: Record<string, unknown>
 }
 
+export interface QAExecutionProblem {
+  sub_problem_id?: string
+  question?: string
+  intent?: string
+  route_type?: string
+  agent_capability?: string
+  depends_on?: string[]
+}
+
+export interface QAExecutionWorkerDescriptor {
+  workerId: string
+  role: string
+  identityPrompt: string
+  capabilities: string[]
+}
+
+export interface QAExecutionRun {
+  sub_problem_id?: string
+  node_id?: string
+  capability?: string
+  agent?: string
+  role?: string
+  success?: boolean
+  error?: string | null
+  output?: Record<string, unknown>
+  status?: string
+  attempt?: number
+  latency_ms?: number
+  identity_prompt?: string
+  task_prompt?: string
+  progress?: number
+  artifact_preview?: string
+}
+
+export interface QAExecutionSnapshot {
+  traceId: string
+  manager: {
+    query?: string
+    stage1?: Record<string, unknown>
+    problems?: QAExecutionProblem[]
+  }
+  plan: {
+    planId?: string
+    metadata?: Record<string, unknown>
+    nodes?: Record<string, unknown>[]
+    workers?: QAExecutionWorkerDescriptor[]
+  }
+  workers: QAExecutionRun[]
+  summary: {
+    fallbackUsed?: boolean
+    finalStatus?: string
+    confidence?: number
+  }
+}
+
+export interface QAExecutionEvent {
+  type: string
+  trace_id?: string
+  traceId?: string
+  node_id?: string
+  worker?: string
+  role?: string
+  capability?: string
+  identity_prompt?: string
+  task_prompt?: string
+  progress?: number
+  error?: string
+  artifact_preview?: string
+  plan?: Record<string, unknown>
+  problems?: QAExecutionProblem[]
+  timestamp?: string
+  seq?: number
+  [key: string]: unknown
+}
+
 export interface QAOptions {
   timeout_sec?: number
   max_context_chars?: number
@@ -361,9 +437,11 @@ interface QAV1RawResponse {
   trace_id: string
   answer?: string
   confidence?: number
+  citations?: Array<{ source?: string; text?: string; score?: number }>
   intent_tag?: string
   stage1_result?: Record<string, unknown>
   stage2_result?: Record<string, unknown>
+  execution?: QAExecutionSnapshot
   clarification?: {
     thread_id?: string
     question?: string
@@ -383,6 +461,7 @@ function mapQAV1RawResponse(raw: QAV1RawResponse): QAResponse {
       { type: "stage1", data: raw.stage1_result || {} },
       { type: "stage2", data: raw.stage2_result || {} },
     ],
+    execution: raw.execution,
   } satisfies Omit<QAResponse, "answer" | "citations">
 
   if (raw.status === "clarification_pending") {
@@ -392,7 +471,11 @@ function mapQAV1RawResponse(raw: QAV1RawResponse): QAResponse {
     return {
       ...base,
       answer: question,
-      citations: [],
+      citations: (raw.citations || []).map((item) => ({
+        chunkId: item.source || "unknown",
+        text: item.text || "",
+        score: Number(item.score || 0),
+      })),
       clarification: threadId
         ? {
             threadId,
@@ -406,7 +489,11 @@ function mapQAV1RawResponse(raw: QAV1RawResponse): QAResponse {
   return {
     ...base,
     answer: raw.answer || "",
-    citations: [],
+    citations: (raw.citations || []).map((item) => ({
+      chunkId: item.source || "unknown",
+      text: item.text || "",
+      score: Number(item.score || 0),
+    })),
   }
 }
 
@@ -415,6 +502,7 @@ export async function askQuestion(
     query: string
     docId?: string
     sessionId?: string
+    traceId?: string
     options?: QAOptions
   },
   signal?: AbortSignal,
@@ -426,6 +514,7 @@ export async function askQuestion(
       query: params.query,
       docScope: params.docId ? [params.docId] : [],
       sessionId: params.sessionId || null,
+      traceId: params.traceId || null,
       options: params.options || undefined,
     }),
     signal,
@@ -467,6 +556,27 @@ export async function answerClarification(
   return mapQAV1RawResponse(raw)
 }
 
+export async function retryExecution(
+  traceId: string,
+  signal?: AbortSignal,
+): Promise<QAResponse> {
+  const response = await fetch(`${API_BASE}/api/qa/v1/execution/${encodeURIComponent(traceId)}/retry`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    signal,
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`QA retry API error ${response.status}: ${errorText}`)
+  }
+
+  const raw: QAV1RawResponse = await response.json()
+  return mapQAV1RawResponse(raw)
+}
+
 
 // ── SSE 连接 ──
 
@@ -482,6 +592,30 @@ export function connectTranslationSSE(
       const data: TranslationSSEEvent = JSON.parse(e.data)
       onEvent(data)
     } catch { /* ignore parse errors */ }
+  }
+  if (onError) {
+    es.onerror = onError
+  }
+  return es
+}
+
+export function connectQAExecutionSSE(
+  traceId: string,
+  onEvent: (event: QAExecutionEvent) => void,
+  onError?: (error: Event) => void,
+): EventSource {
+  const url = `${API_BASE}/api/sse/qa/${encodeURIComponent(traceId)}`
+  const es = new EventSource(url)
+  es.onmessage = (e) => {
+    try {
+      const data: QAExecutionEvent = JSON.parse(e.data)
+      onEvent(data)
+    } catch (error) {
+      onEvent({
+        type: "stream.parse_error",
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
   if (onError) {
     es.onerror = onError

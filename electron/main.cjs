@@ -1,5 +1,5 @@
 const { app, BrowserWindow, dialog } = require('electron');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
 
@@ -8,6 +8,8 @@ const FRONTEND_URL = 'http://127.0.0.1:3302';
 const BACKEND_HEALTH_URL = 'http://127.0.0.1:3301/health';
 const SHOW_CHILD_LOGS = process.env.MAELSTROM_CHILD_LOGS === '1';
 const SHOW_ERROR_DIALOGS = process.env.MAELSTROM_SHOW_ERROR_DIALOG === '1';
+const REUSE_EXISTING_SERVICES = process.env.MAELSTROM_REUSE_EXISTING_SERVICES === '1';
+const ADOPT_REUSED_SERVICES = process.env.MAELSTROM_ADOPT_REUSED_SERVICES !== '0';
 const CHILD_LOG_TAIL_LIMIT = 120;
 const SCRIPT_READY_URL = Object.freeze({
   'dev:backend': BACKEND_HEALTH_URL,
@@ -16,6 +18,7 @@ const SCRIPT_READY_URL = Object.freeze({
 const PORT_IN_USE_PATTERN = /EADDRINUSE|10048|address already in use|attempting to bind on address/i;
 
 const CHILDREN = [];
+const ADOPTED_PIDS = new Set();
 let isShuttingDown = false;
 
 function buildScriptSpawnSpec(scriptName) {
@@ -190,12 +193,105 @@ function showErrorDialogIfNeeded(title, message) {
 
 async function ensureService(scriptName, readyUrl, timeoutMs) {
   if (await ping(readyUrl)) {
-    console.log(`[electron] reusing existing service for ${scriptName}: ${readyUrl}`);
-    return;
+    const port = getPortFromUrl(readyUrl);
+    const pids = findListeningPids(port);
+    if (!REUSE_EXISTING_SERVICES) {
+      console.warn(`[electron] ${scriptName} already running on port ${port}, restarting to avoid stale process`);
+      for (const pid of pids) {
+        if (pid > 0 && pid !== process.pid) {
+          killPidTree(pid);
+        }
+      }
+      await waitForUrlDown(readyUrl, 10000);
+    } else {
+      console.log(`[electron] reusing existing service for ${scriptName}: ${readyUrl}`);
+      if (ADOPT_REUSED_SERVICES) {
+        for (const pid of pids) {
+          if (pid > 0 && pid !== process.pid) {
+            ADOPTED_PIDS.add(pid);
+          }
+        }
+      }
+      return;
+    }
   }
 
   spawnScript(scriptName);
   await waitForUrl(readyUrl, timeoutMs);
+}
+
+function getPortFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const explicit = Number(parsed.port || 0);
+    if (explicit > 0) {
+      return explicit;
+    }
+    return parsed.protocol === 'https:' ? 443 : 80;
+  } catch {
+    return 0;
+  }
+}
+
+function findListeningPids(port) {
+  if (!port) {
+    return [];
+  }
+
+  if (process.platform === 'win32') {
+    const result = spawnSync('netstat', ['-ano', '-p', 'tcp'], { encoding: 'utf8' });
+    if (result.status !== 0 || !result.stdout) {
+      return [];
+    }
+
+    const pids = new Set();
+    const lines = result.stdout.split(/\r?\n/);
+    const marker = `:${port}`;
+    for (const line of lines) {
+      const normalized = line.trim();
+      if (!normalized || !normalized.includes(marker) || !normalized.includes('LISTENING')) {
+        continue;
+      }
+      const parts = normalized.split(/\s+/);
+      const pid = Number(parts[parts.length - 1]);
+      if (Number.isInteger(pid) && pid > 0) {
+        pids.add(pid);
+      }
+    }
+    return Array.from(pids);
+  }
+
+  const result = spawnSync('lsof', ['-ti', `tcp:${port}`], { encoding: 'utf8' });
+  if (result.status !== 0 || !result.stdout) {
+    return [];
+  }
+  return result.stdout
+    .split(/\r?\n/)
+    .map((item) => Number(item.trim()))
+    .filter((pid) => Number.isInteger(pid) && pid > 0);
+}
+
+function killPidTree(pid) {
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+      process.kill(pid, 'SIGTERM');
+    }
+  } catch (error) {
+    console.error('[electron] failed to kill pid:', pid, error);
+  }
+}
+
+async function waitForUrlDown(url, timeoutMs) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const ready = await ping(url);
+    if (!ready) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
 }
 
 function cleanupChildren() {
@@ -205,14 +301,12 @@ function cleanupChildren() {
       continue;
     }
 
-    try {
-      if (process.platform === 'win32') {
-        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-      } else {
-        child.kill('SIGTERM');
-      }
-    } catch (error) {
-      console.error('[electron] failed to stop child process:', error);
+    killPidTree(child.pid);
+  }
+
+  for (const pid of ADOPTED_PIDS) {
+    if (pid > 0 && pid !== process.pid) {
+      killPidTree(pid);
     }
   }
 }

@@ -1,5 +1,4 @@
 import logging
-import logging.config
 import sys
 from pathlib import Path
 
@@ -8,36 +7,9 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# ── 统一日志配置 ──
-LOGGING_CONFIG = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "default": {
-            "format": "%(asctime)s │ %(levelname)-7s │ %(name)s │ %(message)s",
-            "datefmt": "%H:%M:%S",
-        },
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "default",
-            "stream": "ext://sys.stdout",
-        },
-    },
-    "loggers": {
-        # 压掉 httpx 每次请求的 INFO 日志，只保留 WARNING+
-        "httpx": {"level": "WARNING"},
-        "httpcore": {"level": "WARNING"},
-        # uvicorn access log 保持 INFO
-        "uvicorn.access": {"level": "INFO"},
-    },
-    "root": {
-        "level": "INFO",
-        "handlers": ["console"],
-    },
-}
-logging.config.dictConfig(LOGGING_CONFIG)
+from app.logging_utils import configure_logging
+
+LOG_FILE_PATH = configure_logging()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,6 +28,7 @@ from core.ocr import get_ocr_manager, load_ocr_config_data
 from app.core.key_store import key_store
 
 logger = logging.getLogger(__name__)
+logger.info("logging initialized", extra={"log_file": str(LOG_FILE_PATH)})
 
 app = FastAPI(
     title="Maelstrom",

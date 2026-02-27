@@ -4,25 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { cn } from "@/lib/utils"
 import { SessionSidebar } from "./SessionSidebar"
 import { ChatArea } from "./ChatArea"
-
-export interface Session {
-  id: string
-  title: string
-  createdAt: Date
-  updatedAt: Date
-  docId?: string
-}
-
-export interface Message {
-  id: string
-  role: "user" | "assistant"
-  content: string
-  citations?: Array<{
-    text: string
-    source: string
-  }>
-  timestamp: Date
-}
+import type { Message, Session } from "./types"
 
 interface QADialogProps {
   isOpen: boolean
@@ -40,6 +22,7 @@ interface QADialogProps {
   onSwitchSession: (sessionId: string) => void
   onDeleteSession: (sessionId: string) => void
   onSendMessage: (content: string) => void
+  onRetryExecution?: (traceId: string) => void
   docId?: string
 }
 
@@ -64,6 +47,7 @@ export function QADialog({
   onSwitchSession,
   onDeleteSession,
   onSendMessage,
+  onRetryExecution,
   docId,
 }: QADialogProps) {
   const [size, setSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT })
@@ -227,6 +211,7 @@ export function QADialog({
             messages={messages}
             isLoading={isLoading}
             onSendMessage={onSendMessage}
+            onRetryExecution={onRetryExecution}
             selectedProfile={selectedProfile}
           />
         </div>

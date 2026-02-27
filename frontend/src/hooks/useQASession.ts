@@ -3,7 +3,14 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Message, Session } from "@/components/qa/types"
 import { useLLMConfig } from "@/contexts/LLMConfigContext"
-import { answerClarification, askQuestion } from "@/lib/api"
+import {
+  answerClarification,
+  askQuestion,
+  connectQAExecutionSSE,
+  QAExecutionEvent,
+  QAExecutionSnapshot,
+  retryExecution as retryExecutionApi,
+} from "@/lib/api"
 
 function generateId(): string {
   return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -34,6 +41,8 @@ export function useQASession(options: UseQASessionOptions = {}) {
   const [clarificationThreadBySession, setClarificationThreadBySession] = useState<Record<string, string>>({})
 
   const abortControllerRef = useRef<AbortController | null>(null)
+  const executionByTraceRef = useRef<Record<string, QAExecutionSnapshot>>({})
+  const executionSSERef = useRef<EventSource | null>(null)
 
   // 从 localStorage 加载会话
   useEffect(() => {
@@ -92,6 +101,13 @@ export function useQASession(options: UseQASessionOptions = {}) {
       // 忽略错误
     }
   }, [currentSessionId])
+
+  useEffect(() => {
+    return () => {
+      executionSSERef.current?.close()
+      executionSSERef.current = null
+    }
+  }, [])
 
   // 当前会话
   const currentSession = sessions.find((s) => s.id === currentSessionId) || null
@@ -164,6 +180,18 @@ export function useQASession(options: UseQASessionOptions = {}) {
       setMessages((prev) => [...prev, userMessage])
       setIsLoading(true)
 
+      const pendingAssistantId = generateId()
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: pendingAssistantId,
+          role: "assistant",
+          content: "正在由 Manager 和 Worker 集群处理中...",
+          timestamp: new Date(),
+          isStreaming: true,
+        },
+      ])
+
       // 更新会话标题（如果是第一条消息）
       setSessions((prev) =>
         prev.map((s) =>
@@ -182,6 +210,32 @@ export function useQASession(options: UseQASessionOptions = {}) {
         abortControllerRef.current = new AbortController()
 
         const pendingThreadId = clarificationThreadBySession[sessionId]
+        const traceId = `tr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+
+        executionByTraceRef.current[traceId] = createExecutionSnapshot(traceId, content.trim())
+
+        if (executionSSERef.current) {
+          executionSSERef.current.close()
+        }
+
+        executionSSERef.current = connectQAExecutionSSE(
+          traceId,
+          (event: QAExecutionEvent) => {
+            const current = executionByTraceRef.current[traceId]
+            if (!current) return
+            const updated = applyExecutionEvent(current, event)
+            executionByTraceRef.current[traceId] = updated
+            setMessages((prev) =>
+              prev.map((msg) => (msg.id === pendingAssistantId ? { ...msg, execution: updated } : msg)),
+            )
+          },
+          () => {
+            if (executionSSERef.current) {
+              executionSSERef.current.close()
+              executionSSERef.current = null
+            }
+          },
+        )
 
         const response = pendingThreadId
           ? await answerClarification(
@@ -197,6 +251,7 @@ export function useQASession(options: UseQASessionOptions = {}) {
                 query: content.trim(),
                 docId,
                 sessionId: sessionId || undefined,
+                traceId,
                 options: { timeout_sec: 12, max_context_chars: 8000 },
               },
               abortControllerRef.current.signal,
@@ -221,19 +276,34 @@ export function useQASession(options: UseQASessionOptions = {}) {
           })
         }
 
-        const assistantMessage: Message = {
-          id: generateId(),
-          role: "assistant",
-          content: response.answer || "",
-          citations: (response.citations || []).map((citation) => ({
-            text: citation.text,
-            source: citation.chunkId,
-          })),
-          timestamp: new Date(),
-          isStreaming: false,
-        }
+        const finalExecution =
+          response.execution ||
+          executionByTraceRef.current[response.traceId || traceId] ||
+          executionByTraceRef.current[traceId]
 
-        setMessages((prev) => [...prev, assistantMessage])
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === pendingAssistantId
+              ? {
+                  ...msg,
+                  content: response.answer || "",
+                  citations: (response.citations || []).map((citation) => ({
+                    text: citation.text,
+                    source: citation.chunkId,
+                  })),
+                  isStreaming: false,
+                  execution: finalExecution,
+                }
+              : msg,
+          ),
+        )
+
+        if (executionSSERef.current) {
+          setTimeout(() => {
+            executionSSERef.current?.close()
+            executionSSERef.current = null
+          }, 1200)
+        }
       } catch (error: any) {
         if (error.name === "AbortError") {
           // 用户取消，不显示错误
@@ -242,12 +312,12 @@ export function useQASession(options: UseQASessionOptions = {}) {
 
         // 添加错误消息
         const errorMessage: Message = {
-          id: generateId(),
+          id: pendingAssistantId,
           role: "assistant",
           content: `抱歉，发生了错误：${error.message || "未知错误"}`,
           timestamp: new Date(),
         }
-        setMessages((prev) => [...prev, errorMessage])
+        setMessages((prev) => prev.map((msg) => (msg.id === pendingAssistantId ? errorMessage : msg)))
       } finally {
         setIsLoading(false)
         abortControllerRef.current = null
@@ -273,7 +343,65 @@ export function useQASession(options: UseQASessionOptions = {}) {
       abortControllerRef.current = null
       setIsLoading(false)
     }
+    if (executionSSERef.current) {
+      executionSSERef.current.close()
+      executionSSERef.current = null
+    }
   }, [])
+
+  const retryExecution = useCallback(async (traceId: string) => {
+    const targetMessage = messages.find((msg) => msg.execution?.traceId === traceId)
+    if (!targetMessage) {
+      return
+    }
+
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === targetMessage.id
+          ? {
+              ...msg,
+              isStreaming: true,
+              content: "正在重试这次执行...",
+            }
+          : msg,
+      ),
+    )
+
+    setIsLoading(true)
+    try {
+      const response = await retryExecutionApi(traceId)
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === targetMessage.id
+            ? {
+                ...msg,
+                isStreaming: false,
+                content: response.answer || "",
+                citations: (response.citations || []).map((citation) => ({
+                  text: citation.text,
+                  source: citation.chunkId,
+                })),
+                execution: response.execution || msg.execution,
+              }
+            : msg,
+        ),
+      )
+    } catch (error: any) {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === targetMessage.id
+            ? {
+                ...msg,
+                isStreaming: false,
+                content: `重试失败：${error?.message || "未知错误"}`,
+              }
+            : msg,
+        ),
+      )
+    } finally {
+      setIsLoading(false)
+    }
+  }, [messages])
 
   return {
     sessions,
@@ -288,7 +416,87 @@ export function useQASession(options: UseQASessionOptions = {}) {
     switchSession,
     deleteSession,
     sendMessage,
+    retryExecution,
     clearMessages,
     cancelRequest,
   }
+}
+
+function createExecutionSnapshot(traceId: string, query: string): QAExecutionSnapshot {
+  return {
+    traceId,
+    manager: {
+      query,
+      problems: [],
+    },
+    plan: {
+      workers: [],
+      nodes: [],
+      metadata: {},
+    },
+    workers: [],
+    summary: {
+      fallbackUsed: false,
+      finalStatus: "running",
+      confidence: 0,
+    },
+  }
+}
+
+function applyExecutionEvent(snapshot: QAExecutionSnapshot, event: QAExecutionEvent): QAExecutionSnapshot {
+  const next: QAExecutionSnapshot = {
+    ...snapshot,
+    manager: { ...(snapshot.manager || {}) },
+    plan: { ...(snapshot.plan || {}) },
+    workers: [...(snapshot.workers || [])],
+    summary: { ...(snapshot.summary || {}) },
+  }
+
+  if (event.type === "manager.parsed") {
+    next.manager = {
+      ...(next.manager || {}),
+      stage1: (event.stage1 as Record<string, unknown>) || next.manager.stage1,
+      problems: (event.problems as any[]) || next.manager.problems,
+    }
+  }
+
+  if (event.type === "plan.created" && event.plan) {
+    next.plan = {
+      ...(next.plan || {}),
+      ...(event.plan as Record<string, unknown>),
+    }
+  }
+
+  if (event.node_id) {
+    const index = next.workers.findIndex((run) => (run.node_id || run.sub_problem_id) === event.node_id)
+    const patch = {
+      node_id: event.node_id,
+      sub_problem_id: event.node_id,
+      capability: event.capability,
+      role: event.role,
+      agent: event.worker,
+      identity_prompt: event.identity_prompt,
+      task_prompt: event.task_prompt,
+      progress: typeof event.progress === "number" ? event.progress : undefined,
+      status: event.type === "worker.started" ? "RUNNING" : event.type === "worker.completed" ? "COMPLETED" : event.type === "worker.failed" ? "FAILED" : undefined,
+      success: event.type === "worker.completed" ? true : event.type === "worker.failed" ? false : undefined,
+      error: event.error,
+      artifact_preview: event.artifact_preview,
+    }
+    if (index >= 0) {
+      next.workers[index] = { ...next.workers[index], ...patch }
+    } else {
+      next.workers.push(patch)
+    }
+  }
+
+  if (event.type === "fallback.started") {
+    next.summary.fallbackUsed = true
+  }
+
+  if (event.type === "final.ready") {
+    next.summary.finalStatus = "complete"
+  }
+
+  return next
 }

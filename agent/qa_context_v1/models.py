@@ -123,8 +123,10 @@ class KernelResponse:
     tags: list[str] = field(default_factory=list)
     intent_tag: str = "UNKNOWN"
     confidence: float = 0.0
+    citations: list[dict[str, Any]] = field(default_factory=list)
     stage1_result: dict[str, Any] = field(default_factory=dict)
     stage2_result: dict[str, Any] = field(default_factory=dict)
+    execution: dict[str, Any] | None = None
     clarification: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -135,5 +137,6 @@ class KernelResponse:
 class QueryRequest:
     query: str
     session_id: str | None = None
+    trace_id: str | None = None
     doc_scope: list[str] = field(default_factory=list)
     options: dict[str, Any] = field(default_factory=dict)

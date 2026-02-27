@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .models import DialogueTurn
@@ -30,16 +31,28 @@ class QAContextIndexer:
         query_tokens = self._tokens(query)
         total = max(len(turns), 1)
         ranked: list[dict[str, Any]] = []
+        seen_fingerprints: set[str] = set()
         for index, turn in enumerate(turns):
             recency = 1.0 - (index / total)
-            body = " ".join([turn.user_query, turn.summary, turn.assistant_answer or ""])
+            summary = self._sanitize_text(turn.summary)
+            body = " ".join([turn.user_query, summary])
             body_tokens = self._tokens(body)
             overlap = len(query_tokens.intersection(body_tokens)) / max(len(query_tokens), 1)
-            score = round((0.65 * overlap) + (0.35 * recency), 4)
+            score = round((0.8 * overlap) + (0.2 * recency), 4)
+
+            if overlap <= 0 and recency < 0.5:
+                continue
+
+            fingerprint = self._fingerprint(summary)
+            if fingerprint and fingerprint in seen_fingerprints:
+                continue
+            if fingerprint:
+                seen_fingerprints.add(fingerprint)
+
             ranked.append(
                 {
                     "turn_id": turn.turn_id,
-                    "summary": turn.summary,
+                    "summary": summary,
                     "intent_tag": turn.intent_tag,
                     "tags": turn.tags,
                     "score": score,
@@ -50,3 +63,16 @@ class QAContextIndexer:
 
     def _tokens(self, text: str) -> set[str]:
         return {token.strip().lower() for token in text.split() if token.strip()}
+
+    def _sanitize_text(self, text: str) -> str:
+        normalized = text.replace("\n", " ").strip()
+        if "| A:" in normalized:
+            normalized = normalized.split("| A:", 1)[-1].strip()
+        if normalized.startswith("Q:"):
+            normalized = normalized[2:].strip()
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized[:220]
+
+    def _fingerprint(self, text: str) -> str:
+        compact = re.sub(r"\W+", "", text.lower())
+        return compact[:80]

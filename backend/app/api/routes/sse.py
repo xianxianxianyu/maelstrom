@@ -131,3 +131,78 @@ async def translation_sse(task_id: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+async def _qa_event_generator(trace_id: str) -> AsyncGenerator[str, None]:
+    from app.api.routes.qa_v1 import _get_kernel
+
+    bus = get_event_bus()
+    queue = bus.subscribe(trace_id)
+    kernel = _get_kernel()
+    logger.info("qa_sse_stream_start", extra={"trace_id": trace_id})
+
+    sent_seq: set[int] = set()
+
+    init_event = {
+        "type": "stream.connected",
+        "trace_id": trace_id,
+        "progress": 0,
+    }
+    yield f"data: {json.dumps(init_event)}\n\n"
+
+    replay = kernel.get_execution_events(trace_id)
+    for event in replay:
+        seq = int(event.get("seq") or 0)
+        if seq > 0:
+            sent_seq.add(seq)
+        yield f"data: {json.dumps(event)}\n\n"
+
+    if replay and replay[-1].get("type") == "final.ready":
+        done_event = {"type": "stream.complete", "trace_id": trace_id, "progress": 100}
+        yield f"data: {json.dumps(done_event)}\n\n"
+        bus.unsubscribe(trace_id, queue)
+        logger.info("qa_sse_stream_replay_complete", extra={"trace_id": trace_id, "replayed": len(replay)})
+        return
+
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=10)
+            except asyncio.TimeoutError:
+                heartbeat = {
+                    "type": "heartbeat",
+                    "trace_id": trace_id,
+                    "progress": -1,
+                }
+                yield f"data: {json.dumps(heartbeat)}\n\n"
+                continue
+
+            seq = int(event.get("seq") or 0)
+            if seq and seq in sent_seq:
+                continue
+            if seq:
+                sent_seq.add(seq)
+            yield f"data: {json.dumps(event)}\n\n"
+
+            if event.get("type") == "final.ready":
+                done_event = {"type": "stream.complete", "trace_id": trace_id, "progress": 100}
+                yield f"data: {json.dumps(done_event)}\n\n"
+                logger.info("qa_sse_stream_complete", extra={"trace_id": trace_id})
+                break
+    except asyncio.CancelledError:
+        logger.info("QA SSE client disconnected: trace_id=%s", trace_id)
+    finally:
+        bus.unsubscribe(trace_id, queue)
+
+
+@router.get("/qa/{trace_id}")
+async def qa_execution_sse(trace_id: str):
+    return StreamingResponse(
+        _qa_event_generator(trace_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

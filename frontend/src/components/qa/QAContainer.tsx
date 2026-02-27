@@ -27,6 +27,7 @@ export function QAContainer({ docId }: QAContainerProps) {
     switchSession,
     deleteSession,
     sendMessage,
+    retryExecution,
   } = useQASession({ docId })
 
   // 当有新消息且对话框关闭时，更新未读计数
@@ -84,6 +85,7 @@ export function QAContainer({ docId }: QAContainerProps) {
         onSwitchSession={switchSession}
         onDeleteSession={deleteSession}
         onSendMessage={sendMessage}
+        onRetryExecution={retryExecution}
         docId={docId}
       />
     </>
