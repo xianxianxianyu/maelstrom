@@ -1,0 +1,25 @@
+{
+  "id": "gap-basic-001",
+  "engine": "gap",
+  "input_params": {
+    "topic": "transformer attention mechanisms",
+    "session_id": "eval-session-gap"
+  },
+  "recorded_llm_responses": [
+    "{\"candidates\": [\"transformer attention mechanisms\"], \"refined_topic\": \"transformer attention mechanisms\"}",
+    "{\"queries\": [\"transformer attention mechanisms survey\", \"self-attention alternatives\"]}",
+    "{\"coverage_matrix\": {\"summary\": {\"total_papers\": 5, \"coverage_score\": 0.7}}}",
+    "[{\"gap_id\": \"g1\", \"title\": \"Efficient attention\", \"summary\": \"Gap in efficient attention\", \"gap_type\": [\"methodological\"], \"severity\": 0.8}]",
+    "[{\"gap_id\": \"g1\", \"title\": \"Efficient attention\", \"valid\": true, \"critique\": \"Well-supported\"}]",
+    "{\"ranked_gaps\": [{\"gap_id\": \"g1\", \"title\": \"Efficient attention\", \"summary\": \"Gap in efficient attention\", \"gap_type\": [\"methodological\"], \"severity\": 0.8, \"rank\": 1}]}"
+  ],
+  "expected_output_schema": {
+    "type": "object",
+    "properties": {
+      "ranked_gaps": {"type": "array"}
+    }
+  },
+  "quality_criteria": {
+    "has_ranked_gaps": true
+  }
+}

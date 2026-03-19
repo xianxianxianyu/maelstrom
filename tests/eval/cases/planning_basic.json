@@ -1,0 +1,27 @@
+{
+  "id": "planning-basic-001",
+  "engine": "planning",
+  "input_params": {
+    "topic": "efficient attention mechanisms",
+    "session_id": "eval-session-plan"
+  },
+  "recorded_llm_responses": [
+    "{\"hypothesis\": \"Linear attention can match quadratic attention\", \"variables\": [\"attention_type\"]}",
+    "{\"baselines\": [{\"name\": \"vanilla transformer\", \"description\": \"Standard multi-head attention\"}]}",
+    "{\"dataset_protocol\": {\"datasets\": [\"WMT14\"], \"splits\": {\"train\": 0.8, \"val\": 0.1, \"test\": 0.1}}}",
+    "{\"metrics\": [\"BLEU\", \"perplexity\"], \"ablation\": {\"components\": [\"attention_type\"]}}",
+    "{\"risk_memo\": {\"risks\": [{\"risk\": \"Compute cost\", \"severity\": \"medium\", \"mitigation\": \"Use smaller model\"}]}}",
+    "{\"valid\": true, \"checklist\": [\"hypothesis defined\", \"baselines listed\"]}",
+    "{\"plan\": {\"title\": \"Linear Attention Experiment\", \"steps\": [\"Setup\", \"Train\", \"Evaluate\"]}}"
+  ],
+  "expected_output_schema": {
+    "type": "object",
+    "properties": {
+      "plan": {"type": "object"}
+    }
+  },
+  "quality_criteria": {
+    "has_plan": true,
+    "has_hypothesis": true
+  }
+}

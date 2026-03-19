@@ -1,0 +1,26 @@
+{
+  "id": "experiment-basic-001",
+  "engine": "experiment",
+  "input_params": {
+    "topic": "linear attention experiment",
+    "session_id": "eval-session-exp"
+  },
+  "recorded_llm_responses": [
+    "{\"config_snapshot\": {\"model\": \"linear-attn\", \"epochs\": 10}}",
+    "{\"metrics\": [{\"name\": \"BLEU\", \"value\": 28.5}, {\"name\": \"perplexity\", \"value\": 12.3}]}",
+    "{\"normalized_metrics\": [{\"name\": \"BLEU\", \"value\": 28.5, \"normalized\": 0.71}]}",
+    "{\"conclusion\": {\"summary\": \"Linear attention achieves competitive BLEU\", \"supported\": true}}",
+    "{\"evidence_bindings\": [{\"claim\": \"competitive BLEU\", \"evidence\": \"28.5 vs 29.1 baseline\"}]}",
+    "[{\"claim\": \"Linear attention matches quadratic\", \"verdict\": \"partially_supported\", \"confidence\": 0.7}]",
+    "{\"reflection\": {\"insights\": [\"Linear attention trades quality for speed\"], \"next_steps\": [\"Try hybrid approach\"]}}"
+  ],
+  "expected_output_schema": {
+    "type": "object",
+    "properties": {
+      "conclusion": {}
+    }
+  },
+  "quality_criteria": {
+    "has_conclusion": true
+  }
+}

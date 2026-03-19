@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+*.egg
+
+# Ruff / Pytest
+.ruff_cache/
+.pytest_cache/
+
+# Data
+data/pdfs/
+
+# Maelstrom runtime
+.maelstrom/
+.maelstrom.pid
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

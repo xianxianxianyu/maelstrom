@@ -1,0 +1,26 @@
+{
+  "id": "synthesis-basic-001",
+  "engine": "synthesis",
+  "input_params": {
+    "topic": "transformer attention mechanisms",
+    "session_id": "eval-session-syn"
+  },
+  "recorded_llm_responses": [
+    "[{\"paper_id\": \"p1\", \"title\": \"Attention Is All You Need\", \"relevant\": true}]",
+    "[{\"paper_id\": \"p1\", \"title\": \"Attention Is All You Need\", \"relevant\": true}]",
+    "[{\"claim_id\": \"c1\", \"text\": \"Self-attention is effective\", \"type\": \"empirical\"}]",
+    "[{\"claim_id\": \"c1\", \"sources\": [\"p1\"]}]",
+    "{\"consensus_points\": [{\"point\": \"Attention works\"}], \"conflict_points\": []}",
+    "{\"verdict\": \"feasible\", \"confidence\": 0.85, \"reasoning\": \"Well-supported\"}",
+    "{\"review_report\": {\"summary\": \"Synthesis complete\", \"key_findings\": [\"Attention is effective\"]}}"
+  ],
+  "expected_output_schema": {
+    "type": "object",
+    "properties": {
+      "claims": {"type": "array"}
+    }
+  },
+  "quality_criteria": {
+    "has_claims": true
+  }
+}
